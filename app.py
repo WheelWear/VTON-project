@@ -10,6 +10,10 @@ from PIL import Image
 from huggingface_hub import snapshot_download
 from diffusers.image_processor import VaeImageProcessor
 
+```
+리사이즈 및 크롭 함수 추가
+
+```
 # CatVTON 디렉토리를 sys.path에 추가하여 CatVTON/app.py와 동일하게 모듈 임포트
 catvton_dir = os.path.join(os.path.dirname(__file__), "CatVTON")
 if catvton_dir not in sys.path:
