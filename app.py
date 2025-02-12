@@ -72,81 +72,81 @@ automasker = AutoMasker(
     device='cuda'
 )
 
-def submit_function(
-    person_image,  # dict type: {"background": <path>, "layers": [<mask_path>, ...]}
-    cloth_image,   # path to cloth image
-    cloth_type,
-    num_inference_steps,
-    guidance_scale,
-    seed,
-    show_type
-):
-    # Process person image and mask input
-    person_img_path = person_image["background"]
-    mask_path = person_image["layers"][0]
-    mask = Image.open(mask_path).convert("L")
-    if len(np.unique(np.array(mask))) == 1:
-        mask = None
-    else:
-        mask_np = np.array(mask)
-        mask_np[mask_np > 0] = 255
-        mask = Image.fromarray(mask_np)
+# def submit_function(
+#     person_image,  # dict type: {"background": <path>, "layers": [<mask_path>, ...]}
+#     cloth_image,   # path to cloth image
+#     cloth_type,
+#     num_inference_steps,
+#     guidance_scale,
+#     seed,
+#     show_type
+# ):
+#     # Process person image and mask input
+#     person_img_path = person_image["background"]
+#     mask_path = person_image["layers"][0]
+#     mask = Image.open(mask_path).convert("L")
+#     if len(np.unique(np.array(mask))) == 1:
+#         mask = None
+#     else:
+#         mask_np = np.array(mask)
+#         mask_np[mask_np > 0] = 255
+#         mask = Image.fromarray(mask_np)
 
-    # 결과 저장 경로 생성
-    date_str = datetime.now().strftime("%Y%m%d%H%M%S")
-    folder_path = os.path.join(args.output_dir, date_str[:8])
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
-    result_save_path = os.path.join(folder_path, date_str[8:] + ".png")
+#     # 결과 저장 경로 생성
+#     date_str = datetime.now().strftime("%Y%m%d%H%M%S")
+#     folder_path = os.path.join(args.output_dir, date_str[:8])
+#     if not os.path.exists(folder_path):
+#         os.makedirs(folder_path)
+#     result_save_path = os.path.join(folder_path, date_str[8:] + ".png")
 
-    # Seed 설정
-    generator = None
-    if seed != -1:
-        generator = torch.Generator(device='cuda').manual_seed(seed)
+#     # Seed 설정
+#     generator = None
+#     if seed != -1:
+#         generator = torch.Generator(device='cuda').manual_seed(seed)
 
-    # 이미지 로드 및 전처리
-    person_img = Image.open(person_img_path).convert("RGB")
-    cloth_img = Image.open(cloth_image).convert("RGB")
-    person_img = resize_and_crop(person_img, (args.width, args.height))
-    cloth_img = resize_and_padding(cloth_img, (args.width, args.height))
+#     # 이미지 로드 및 전처리
+#     person_img = Image.open(person_img_path).convert("RGB")
+#     cloth_img = Image.open(cloth_image).convert("RGB")
+#     person_img = resize_and_crop(person_img, (args.width, args.height))
+#     cloth_img = resize_and_padding(cloth_img, (args.width, args.height))
     
-    # 마스크 처리: mask가 None이면 automasker로 생성, 아니면 리사이즈 후 blur 처리
-    if mask is not None:
-        mask = resize_and_crop(mask, (args.width, args.height))
-    else:
-        mask = automasker(person_img, cloth_type)['mask']
-    mask = mask_processor.blur(mask, blur_factor=9)
+#     # 마스크 처리: mask가 None이면 automasker로 생성, 아니면 리사이즈 후 blur 처리
+#     if mask is not None:
+#         mask = resize_and_crop(mask, (args.width, args.height))
+#     else:
+#         mask = automasker(person_img, cloth_type)['mask']
+#     mask = mask_processor.blur(mask, blur_factor=9)
 
-    # Inference 호출
-    result_image = pipeline(
-        image=person_img,
-        condition_image=cloth_img,
-        mask=mask,
-        num_inference_steps=num_inference_steps,
-        guidance_scale=guidance_scale,
-        generator=generator
-    )[0]
+#     # Inference 호출
+#     result_image = pipeline(
+#         image=person_img,
+#         condition_image=cloth_img,
+#         mask=mask,
+#         num_inference_steps=num_inference_steps,
+#         guidance_scale=guidance_scale,
+#         generator=generator
+#     )[0]
     
-    # Post-process: 결과 이미지를 grid 형태로 합침
-    masked_person = vis_mask(person_img, mask)
-    save_result_image = image_grid([person_img, masked_person, cloth_img, result_image], 1, 4)
-    save_result_image.save(result_save_path)
+#     # Post-process: 결과 이미지를 grid 형태로 합침
+#     masked_person = vis_mask(person_img, mask)
+#     save_result_image = image_grid([person_img, masked_person, cloth_img, result_image], 1, 4)
+#     save_result_image.save(result_save_path)
     
-    if show_type == "result only":
-        return result_image
-    else:
-        width, height = person_img.size
-        if show_type == "input & result":
-            condition_width = width // 2
-            conditions = image_grid([person_img, cloth_img], 2, 1)
-        else:
-            condition_width = width // 3
-            conditions = image_grid([person_img, masked_person, cloth_img], 3, 1)
-        conditions = conditions.resize((condition_width, height), Image.NEAREST)
-        new_result_image = Image.new("RGB", (width + condition_width + 5, height))
-        new_result_image.paste(conditions, (0, 0))
-        new_result_image.paste(result_image, (condition_width + 5, 0))
-        return new_result_image
+#     if show_type == "result only":
+#         return result_image
+#     else:
+#         width, height = person_img.size
+#         if show_type == "input & result":
+#             condition_width = width // 2
+#             conditions = image_grid([person_img, cloth_img], 2, 1)
+#         else:
+#             condition_width = width // 3
+#             conditions = image_grid([person_img, masked_person, cloth_img], 3, 1)
+#         conditions = conditions.resize((condition_width, height), Image.NEAREST)
+#         new_result_image = Image.new("RGB", (width + condition_width + 5, height))
+#         new_result_image.paste(conditions, (0, 0))
+#         new_result_image.paste(result_image, (condition_width + 5, 0))
+#         return new_result_image
 
 
 @app.post("/tryon")
