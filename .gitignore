@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 viton-hd/
+data/
+data.zip
 # C extensions
 *.so
 
