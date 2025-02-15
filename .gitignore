@@ -3,7 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 viton-hd/
-data/
+# data 디렉토리 내의 모든 파일 및 폴더 무시
+data/**
+# 예외: data 디렉토리의 .gitkeep 파일은 추적
+!data/.gitkeep
 data.zip
 # C extensions
 *.so
