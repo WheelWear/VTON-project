@@ -9,15 +9,13 @@ from torchvision import transforms
 from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from tqdm import tqdm
-import resource
-if not hasattr(resource, "getpagesize"):
-    resource.getpagesize = lambda: 4096
-import wandb
+# PEFT 라이브러리를 통해 LoRA 모듈 적용
 try:
     from peft import get_peft_model, LoraConfig, TaskType
 except ImportError:
     raise ImportError("Please install peft library: pip install peft")
 
+# latent diffusion 관련 라이브러리 (예: diffusers의 DDPMScheduler)
 try:
     from diffusers import DDPMScheduler
 except ImportError:
@@ -31,17 +29,18 @@ from utils import compute_vae_encodings
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA Fine-tuning for Latent Diffusion based CatVTON")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the training dataset.")
-    parser.add_argument("--output_dir", type=str, default="output", help="Directory to save checkpoints.")
+    parser.add_argument("--output_dir", type=str, default="output", help="Directory to save checkpoints.") 
     parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument("--lora_rank", type=int, default=4, help="LoRA rank parameter.")
     parser.add_argument("--seed", type=int, default=555, help="Random seed for reproducibility.")
     parser.add_argument("--eval_pair", default=False, help="Evaluate on paired images.")
-    parser.add_argument("--height", type=int, default=1024, help="Image height.")
-    parser.add_argument("--width", type=int, default=768, help="Image width.")
+    parser.add_argument("--height", type=int, default=512, help="Image height.")
+    parser.add_argument("--width", type=int, default=384, help="Image width.")
     # latent diffusion 관련 파라미터
     parser.add_argument("--num_train_timesteps", type=int, default=1000, help="Number of diffusion steps for training.")
+    parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for diffusion.")
     args = parser.parse_args()
     return args
 
@@ -133,12 +132,11 @@ class VITONHDTrainDataset(TrainDataset):
 
 def main():
     args = parse_args()
-    # wandb 초기화 원하지 않으면 주석 처리
-    wandb.init(project="VTON-project", config=vars(args))
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
     base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
@@ -174,91 +172,48 @@ def main():
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()  # diffusion 학습에서는 주로 예측한 노이즈와 실제 노이즈 간의 MSE를 사용
 
+
     dataset = VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    best_loss = float("inf")
-    best_epoch = -1
-    global_step = 0
+    generator = torch.Generator(device='cuda').manual_seed(args.seed)
 
     model.train()
     for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
         total_loss = 0.0
         for batch in dataloader:
-            optimizer.zero_grad()
-
             # 배치에서 person, cloth, mask 텐서를 device로 이동
             person = batch["person"].to(device)
-            condition_image = batch["cloth"].to(device)
-            mask = batch["mask"].to(device)
+            cloth  = batch["cloth"].to(device)
+            mask   = batch["mask"].to(device)
             
-            # --- Inpainting 조건 구성 ---
-            # 마스크 영역: mask 값이 0.5 미만인 영역 유지
-            masked_image = person * (mask < 0.5).float()
-
-            # VAE 인코딩: latent 공간으로 투영 (출력 shape: [B, 4, H', W'])
-            masked_latent = compute_vae_encodings(masked_image, pipeline.vae)
-            condition_latent = compute_vae_encodings(condition_image, pipeline.vae)
-            # mask는 latent 공간 크기로 resize (출력 shape: [B, 1, H', W'])
-            mask_latent = F.interpolate(mask, size=masked_latent.shape[-2:], mode="nearest")
-
-            # 조건으로 사용할 latent 결합
-            # (원래 코드에서는 채널 축(-2, y축)에서 concat하고 이후 슬라이싱하여 3채널로 사용)
-            # 여기서는 채널 축(1)에서 결합하도록 하고, 필요에 따라 1x1 Conv로 채널 수 맞출 수 있음
-            masked_latent_concat = torch.cat([masked_latent, condition_latent], dim=1)  # [B, 8, H', W']
-            # 간단하게 masked_latent_concat의 처음 3채널만 사용 (추후 구조에 맞게 변경 가능)
-            masked_latent_concat = masked_latent_concat[:, :3, :, :]  # [B, 3, H', W']
-            # mask latent: [B, 1, H', W']와 같은 모양의 zeros를 추가해 2채널 구성
-            mask_latent_concat = torch.cat([mask_latent, torch.zeros_like(mask_latent)], dim=1)  # [B, 2, H', W']
-
-            # --- 노이즈 추가 (diffusion training) ---
-            # 학습에서는 non-inpainting 입력으로 랜덤 latent를 생성
-            non_inpainting_latent = torch.randn_like(masked_latent)
-            noise = torch.randn_like(non_inpainting_latent)
-            batch_size = non_inpainting_latent.shape[0]
-            # 각 배치마다 임의의 timestep 선택
-            timesteps = torch.randint(0, args.num_train_timesteps, (batch_size,), device=device).long()
-            # 선택된 timestep에 따라 노이즈 추가
-            noisy_latents = scheduler.add_noise(non_inpainting_latent, noise, timesteps)
-            # 모델 입력 전처리 (scale 적용)
-            non_inpainting_scaled = scheduler.scale_model_input(noisy_latents, timesteps)
-
-            # 최종 모델 입력 구성: 
-            # non_inpainting_scaled (4채널), mask_latent_concat (2채널), masked_latent_concat (3채널) → 총 9채널
-            model_input = torch.cat([non_inpainting_scaled, mask_latent_concat, masked_latent_concat], dim=1)
-            # print("model_input", model_input.shape)
-            # 모델 예측 (예: UNet은 timestep과 함께 입력받음)
-            predicted_noise = model(model_input, encoder_hidden_states=None, timestep=timesteps)[0]
-            # print("predicted_noise", predicted_noise.shape)
-            # 손실 계산: 예측한 노이즈와 실제 노이즈의 MSE
-            loss = loss_fn(predicted_noise, noise)
+            image = model(
+                person,
+                cloth,
+                mask,
+                guidance_scale=args.guidance_scale,
+                height=args.height,
+                width=args.width,
+                generator=generator,
+            )
+            np_image = image.cpu().detach().numpy()
+            
+            loss = loss_fn(person, np_image)
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
-            global_step += 1
-
-            # wandb에 스텝마다 loss 기록
-            wandb.log({"train_loss": loss.item(), "global_step": global_step})
 
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
 
-        # 베스트 성능 체크: 현재 에폭의 손실이 더 낮으면 모델 저장
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            best_epoch = epoch + 1  # 에폭 번호는 1부터 시작
-
-            os.makedirs(args.output_dir, exist_ok=True)
-            checkpoint_path = os.path.join(args.output_dir, f"best_model_{best_epoch}.pt")
-            torch.save(model.state_dict(), checkpoint_path)
-            print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
-            
-            # wandb에 베스트 모델 업데이트 기록
-            wandb.run.summary["best_loss"] = best_loss
-            wandb.run.summary["best_epoch"] = best_epoch
+        # 체크포인트 저장
+        os.makedirs(args.output_dir, exist_ok=True)
+        checkpoint_path = os.path.join(args.output_dir, f"model_epoch_{epoch+1}.pt")
+        torch.save(model.state_dict(), checkpoint_path)
+        print(f"Checkpoint 저장: {checkpoint_path}")
 
     print("학습 완료.")
-    wandb.finish()
+
 
 if __name__ == "__main__":
     main()
