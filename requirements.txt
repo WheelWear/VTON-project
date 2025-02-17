@@ -1,1 +1,7 @@
 fastapi
+torch==2.5.1
+diffusers==0.32.2
+peft==0.14.0
+wandb==0.19.6
+Pillow
+tqdm

@@ -5,7 +5,8 @@ import torch.optim as optim
 from torch.nn import functional as F
 import argparse
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+import torchvision.transforms as transforms
+
 from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from tqdm import tqdm
@@ -24,23 +25,31 @@ except ImportError:
 # CatVTONPipeline 임포트 (여러분의 프로젝트 구조에 맞게 수정)
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 from model.pipeline import CatVTONPipeline
-from utils import compute_vae_encodings
+from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA Fine-tuning for Latent Diffusion based CatVTON")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the training dataset.")
-    parser.add_argument("--output_dir", type=str, default="output", help="Directory to save checkpoints.") 
+    parser.add_argument("--output_dir", type=str, default="output", help="Directory to save checkpoints.")
     parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument("--lora_rank", type=int, default=4, help="LoRA rank parameter.")
     parser.add_argument("--seed", type=int, default=555, help="Random seed for reproducibility.")
     parser.add_argument("--eval_pair", default=False, help="Evaluate on paired images.")
-    parser.add_argument("--height", type=int, default=512, help="Image height.")
-    parser.add_argument("--width", type=int, default=384, help="Image width.")
+    parser.add_argument("--height", type=int, default=1024, help="Image height.")
+    parser.add_argument("--width", type=int, default=768, help="Image width.")
     # latent diffusion 관련 파라미터
     parser.add_argument("--num_train_timesteps", type=int, default=1000, help="Number of diffusion steps for training.")
-    parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for diffusion.")
+    parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
+    parser.add_argument("--attn_ckpt_version", type=str, default="mix", help="Version of the attention checkpoint.")
+    parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
+    parser.add_argument(
+        "--num_inference_steps",
+        type=int,
+        default=1,
+        help="Number of inference steps to perform.",
+    )
     args = parser.parse_args()
     return args
 
@@ -104,7 +113,7 @@ class TrainDataset(Dataset):
 
 class VITONHDTrainDataset(TrainDataset):
     def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_pairs.txt')
+        pair_txt = os.path.join(self.args.data_root_path, 'train_pairs_sample.txt')
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
@@ -147,7 +156,7 @@ def main():
         attn_ckpt_version,
         weight_dtype=torch.float32,
         device="cuda",
-        skip_safety_check=True
+        skip_safety_check=True,
     )
 
     # fine-tuning 대상 모델 (예: UNet) 추출
@@ -165,8 +174,7 @@ def main():
     print("LoRA 적용 완료. 현재 학습 파라미터 수:",
           sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-    # 3. 노이즈 스케줄러 (DDPM) 초기화
-    scheduler = DDPMScheduler(num_train_timesteps=args.num_train_timesteps)
+
     
     # 4. 옵티마이저 및 손실 함수 정의
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
@@ -186,7 +194,7 @@ def main():
             cloth  = batch["cloth"].to(device)
             mask   = batch["mask"].to(device)
             
-            image = model(
+            image = pipeline(
                 person,
                 cloth,
                 mask,
@@ -194,10 +202,19 @@ def main():
                 height=args.height,
                 width=args.width,
                 generator=generator,
+                num_inference_steps = args.num_inference_steps,
             )
-            np_image = image.cpu().detach().numpy()
-            
-            loss = loss_fn(person, np_image)
+
+            print("\n person, image :",person.shape, image.shape)
+            # # 'person' 텐서 시각화 및 저장 (채널 순서를 [채널, 높이, 너비]에서 [높이, 너비, 채널]로 변환)
+            # person_img = person[0].detach().cpu().permute(1, 2, 0).numpy()
+            # import matplotlib.pyplot as plt
+            # plt.imsave("person.png", person_img)
+
+            # # 'image' 텐서 시각화 및 저장
+            # image_img = image[0].detach().cpu().permute(1, 2, 0).numpy()
+            # plt.imsave("image.png", image_img)
+            loss = loss_fn(person, image)
             loss.backward()
             optimizer.step()
 

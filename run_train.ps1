@@ -4,4 +4,4 @@
 # 예: .\venv\Scripts\Activate.ps1
 
 # 학습 스크립트 실행 명령어
-python ./demo_train.py --data_root_path ./viton-hd --output_dir ./ckpt --num_epochs 2 --batch_size 1 --lr 1e-4 --lora_rank 4
+python ./demo_train_use_pipe.py --data_root_path ./viton-hd --output_dir ./ckpt --num_epochs 2 --batch_size 1 --lr 1e-4 --lora_rank 4
