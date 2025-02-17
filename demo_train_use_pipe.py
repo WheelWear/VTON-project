@@ -154,7 +154,7 @@ def main():
         base_ckpt, 
         attn_ckpt,
         attn_ckpt_version,
-        weight_dtype=torch.float32,
+        weight_dtype=torch.float16,
         device="cuda",
         skip_safety_check=True,
     )
@@ -162,11 +162,12 @@ def main():
     # fine-tuning 대상 모델 (예: UNet) 추출
     model = pipeline.unet 
     model.to(device)
+    model = model.to(torch.float16)
 
     # 2. LoRA 설정 및 적용
     lora_config = LoraConfig(
         r=args.lora_rank,
-        lora_alpha=8,
+        lora_alpha=args.lora_rank*2,
         lora_dropout=0.1,
         target_modules=["to_q", "to_k", "to_v"],  
     )
@@ -178,8 +179,8 @@ def main():
     
     # 4. 옵티마이저 및 손실 함수 정의
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    loss_fn = nn.MSELoss()  # diffusion 학습에서는 주로 예측한 노이즈와 실제 노이즈 간의 MSE를 사용
-
+    loss_fn = nn.MSELoss()
+    loss_fn = loss_fn.to(torch.float16)
 
     dataset = VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
@@ -191,10 +192,13 @@ def main():
         total_loss = 0.0
         for batch in dataloader:
             # 배치에서 person, cloth, mask 텐서를 device로 이동
-            person = batch["person"].to(device)
-            cloth  = batch["cloth"].to(device)
-            mask   = batch["mask"].to(device)
-            
+            person = batch["person"]
+            cloth  = batch["cloth"]
+            mask   = batch["mask"]
+            person = person.to(torch.float16).to(device)
+            cloth  = cloth.to(torch.float16).to(device)
+            mask   = mask.to(torch.float16).to(device)
+
             image = pipeline(
                 person,
                 cloth,
@@ -205,7 +209,7 @@ def main():
                 generator=generator,
                 num_inference_steps = args.num_inference_steps,
             )
-            print("\n person, image :",person.shape, image.shape)
+            # print("\n person, image :",person.shape, image.shape)
             loss = loss_fn(person, image)
             loss.backward()
             optimizer.step()
