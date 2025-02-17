@@ -21,7 +21,10 @@ try:
     from diffusers import DDPMScheduler
 except ImportError:
     raise ImportError("Please install diffusers library: pip install diffusers")
-
+import resource
+if not hasattr(resource, "getpagesize"):
+    resource.getpagesize = lambda: 4096
+import wandb
 # CatVTONPipeline 임포트 (여러분의 프로젝트 구조에 맞게 수정)
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 from model.pipeline import CatVTONPipeline
@@ -47,7 +50,7 @@ def parse_args():
     parser.add_argument(
         "--num_inference_steps",
         type=int,
-        default=1,
+        default=50,
         help="Number of inference steps to perform.",
     )
     args = parser.parse_args()
@@ -142,7 +145,8 @@ class VITONHDTrainDataset(TrainDataset):
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
-
+    wandb.init(project="VTON-project", config=vars(args))
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
@@ -187,6 +191,7 @@ def main():
     generator = torch.Generator(device='cuda').manual_seed(args.seed)
     best_loss = float("inf")
     best_epoch = -1
+    global_step = 0
     model.train()
     for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
         total_loss = 0.0
@@ -215,7 +220,8 @@ def main():
             optimizer.step()
 
             total_loss += loss.item()
-
+            global_step += 1
+            wandb.log({"train_loss": loss.item(), "global_step": global_step})
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
 
@@ -227,10 +233,12 @@ def main():
             checkpoint_path = os.path.join(args.output_dir, f"best_model_{best_epoch}.pt")
             torch.save(model.state_dict(), checkpoint_path)
             print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
-
+            # wandb에 베스트 모델 업데이트 기록
+            wandb.run.summary["best_loss"] = best_loss
+            wandb.run.summary["best_epoch"] = best_epoch
 
     print("학습 완료.")
-
+    wandb.finish()
 
 if __name__ == "__main__":
     main()
