@@ -166,7 +166,7 @@ def main():
     # 2. LoRA 설정 및 적용
     lora_config = LoraConfig(
         r=args.lora_rank,
-        lora_alpha=6,
+        lora_alpha=8,
         lora_dropout=0.1,
         target_modules=["to_q", "to_k", "to_v"],  
     )
@@ -184,7 +184,8 @@ def main():
     dataset = VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     generator = torch.Generator(device='cuda').manual_seed(args.seed)
-
+    best_loss = float("inf")
+    best_epoch = -1
     model.train()
     for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
         total_loss = 0.0
@@ -204,16 +205,7 @@ def main():
                 generator=generator,
                 num_inference_steps = args.num_inference_steps,
             )
-
             print("\n person, image :",person.shape, image.shape)
-            # # 'person' 텐서 시각화 및 저장 (채널 순서를 [채널, 높이, 너비]에서 [높이, 너비, 채널]로 변환)
-            # person_img = person[0].detach().cpu().permute(1, 2, 0).numpy()
-            # import matplotlib.pyplot as plt
-            # plt.imsave("person.png", person_img)
-
-            # # 'image' 텐서 시각화 및 저장
-            # image_img = image[0].detach().cpu().permute(1, 2, 0).numpy()
-            # plt.imsave("image.png", image_img)
             loss = loss_fn(person, image)
             loss.backward()
             optimizer.step()
@@ -223,11 +215,15 @@ def main():
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
 
-        # 체크포인트 저장
-        os.makedirs(args.output_dir, exist_ok=True)
-        checkpoint_path = os.path.join(args.output_dir, f"model_epoch_{epoch+1}.pt")
-        torch.save(model.state_dict(), checkpoint_path)
-        print(f"Checkpoint 저장: {checkpoint_path}")
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            best_epoch = epoch + 1
+
+            os.makedirs(args.output_dir, exist_ok=True)
+            checkpoint_path = os.path.join(args.output_dir, f"best_model_{best_epoch}.pt")
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+
 
     print("학습 완료.")
 
