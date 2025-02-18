@@ -6,4 +6,5 @@ wandb
 Pillow
 tqdm
 torchvision
-accelerate git+https://github.com/huggingface/diffusers.git
+accelerate 
+git+https://github.com/huggingface/diffusers.git

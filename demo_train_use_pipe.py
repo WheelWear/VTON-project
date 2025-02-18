@@ -18,12 +18,12 @@ from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from tqdm import tqdm
 
-import wandb
 
 # 윈도우에서 wandb 사용 시 필요한 코드
-# import resource
-# if not hasattr(resource, "getpagesize"):
-#     resource.getpagesize = lambda: 4096
+import resource
+if not hasattr(resource, "getpagesize"):
+    resource.getpagesize = lambda: 4096
+import wandb
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 from model.pipeline import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
@@ -48,10 +48,10 @@ def parse_args():
     parser.add_argument(
         "--num_inference_steps",
         type=int,
-        default=50,
+        default=1,
         help="Number of inference steps to perform.",
     )
-    parser.add_argument("--use_fp16", default=True, help="Use FP16 precision for training.")
+    parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
     args = parser.parse_args()
     return args
 
@@ -157,15 +157,17 @@ def main():
         base_ckpt, 
         attn_ckpt,
         attn_ckpt_version,
-        weight_dtype=torch.float16,
+        weight_dtype=torch.float32,
         device="cuda",
         skip_safety_check=True,
     )
+    precision = torch.float32
+    if args.use_fp16:
+        precision = torch.float16
 
-    # fine-tuning 대상 모델 (예: UNet) 추출
     model = pipeline.unet 
     model.to(device)
-    model = model.to(torch.float16)
+    model = model.to(precision)
 
     # 2. LoRA 설정 및 적용
     lora_config = LoraConfig(
@@ -183,9 +185,6 @@ def main():
     # 4. 옵티마이저 및 손실 함수 정의
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
-    precision = torch.float32
-    if args.use_fp16:
-        precision = torch.float16
     loss_fn = loss_fn.to(precision)
 
     dataset = VITONHDTrainDataset(args)
@@ -202,9 +201,9 @@ def main():
             person = batch["person"]
             cloth  = batch["cloth"]
             mask   = batch["mask"]
-            person = person.to(precision).to(device)
-            cloth  = cloth.to(precision).to(device)
-            mask   = mask.to(precision).to(device)
+            person = person.to(device)
+            cloth  = cloth.to(device)
+            mask   = mask.to(device)
 
             image = pipeline(
                 person,
