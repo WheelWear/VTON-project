@@ -25,7 +25,13 @@ if not hasattr(resource, "getpagesize"):
     resource.getpagesize = lambda: 4096
 import wandb
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
-from model.pipeline import CatVTONPipeline_Train
+"""
+사용할 파이프라인 고르기
+"""
+# from model.pipeline import CatVTONPipeline as CatVTONPipeline_Train
+# from model.pipeline_one_timestep import CatVTONPipeline_Train
+# from model.pipeline_multi_timestep import CatVTONPipeline_Train
+from model.pipeline_minimal import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 
 def parse_args():
@@ -166,8 +172,19 @@ def main():
         device="cuda",
         skip_safety_check=True,
     )
+    pipeline.vae.eval()
+
+    # VAE 모델의 파라미터를 고정
+    for param in pipeline.vae.parameters():
+        param.requires_grad = False
+    # UNet 모델의 어텐션 제외 파라미터를 고정
+    pipeline.unet.train()
+    for name, param in pipeline.unet.named_parameters():
+        if "attention" not in name:
+            param.requires_grad = False
+
     model = pipeline.unet 
-    model.to(device)
+    model = model.to(device)
     model = model.to(precision)
 
     # 2. LoRA 설정 및 적용
@@ -178,9 +195,11 @@ def main():
         target_modules=["to_q", "to_k", "to_v"],  
     )
     model = get_peft_model(model, lora_config)
+    model = model.to(device)
+    model = model.to(precision)
     print("LoRA 적용 완료. 현재 학습 파라미터 수:",
           sum(p.numel() for p in model.parameters() if p.requires_grad))
-
+    pipeline.unet = model
 
     
     # 4. 옵티마이저 및 손실 함수 정의
@@ -206,7 +225,9 @@ def main():
             cloth  = cloth.to(device)
             mask   = mask.to(device)
 
-            image = pipeline(
+            # vae encodings
+            # latent로
+            image_latent = pipeline(
                 person,
                 cloth,
                 mask,
@@ -216,8 +237,20 @@ def main():
                 generator=generator,
                 num_inference_steps = args.num_inference_steps,
             )
-            # print("\n person, image :",person.shape, image.shape)
-            loss = loss_fn(person, image)
+            # person 이미지의 VAE 인코딩 계산 (VAE는 고정이므로 no_grad 사용)
+            with torch.no_grad():
+                person_latent = compute_vae_encodings(person, pipeline.vae)
+                person_latent = person_latent.to(dtype=precision)
+                # image_latent = image_latent.to(dtype=precision)
+                print("person_latent dtype", person_latent.dtype)
+                print("image_latent dtype", image_latent.dtype)
+            
+            # 두 latent의 shape이 동일한지 확인 (print 혹은 assert 활용)
+            print("\n person_latent shape:", person_latent.shape, "image_latent shape:", image_latent.shape)
+            
+            # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
+            loss = loss_fn(person_latent, image_latent)
+            print("loss :", loss)
             loss.backward()
             optimizer.step()
 
@@ -227,6 +260,10 @@ def main():
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
 
+        os.makedirs(args.output_dir, exist_ok=True)
+        checkpoint_path = os.path.join(args.output_dir, f"best_model_{epoch + 1}.pt")
+        torch.save(model.state_dict(), checkpoint_path)
+        print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {epoch + 1})")
         if avg_loss < best_loss:
             best_loss = avg_loss
             best_epoch = epoch + 1
@@ -238,7 +275,7 @@ def main():
             # wandb에 베스트 모델 업데이트 기록
             wandb.run.summary["best_loss"] = best_loss
             wandb.run.summary["best_epoch"] = best_epoch
-
+            wandb.save(checkpoint_path)
     print("학습 완료.")
     wandb.finish()
 
