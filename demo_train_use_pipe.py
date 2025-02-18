@@ -1,33 +1,31 @@
-import os, sys
+import os
+import sys
+import argparse
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn import functional as F
-import argparse
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 
+from peft import get_peft_model, LoraConfig, TaskType
+
+from diffusers import DDPMScheduler
 from diffusers.image_processor import VaeImageProcessor
+
+
 from PIL import Image
 from tqdm import tqdm
-# PEFT 라이브러리를 통해 LoRA 모듈 적용
-try:
-    from peft import get_peft_model, LoraConfig, TaskType
-except ImportError:
-    raise ImportError("Please install peft library: pip install peft")
 
-# latent diffusion 관련 라이브러리 (예: diffusers의 DDPMScheduler)
-try:
-    from diffusers import DDPMScheduler
-except ImportError:
-    raise ImportError("Please install diffusers library: pip install diffusers")
-import resource
-if not hasattr(resource, "getpagesize"):
-    resource.getpagesize = lambda: 4096
 import wandb
-# CatVTONPipeline 임포트 (여러분의 프로젝트 구조에 맞게 수정)
+
+# 윈도우에서 wandb 사용 시 필요한 코드
+# import resource
+# if not hasattr(resource, "getpagesize"):
+#     resource.getpagesize = lambda: 4096
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
-from model.pipeline import CatVTONPipeline
+from model.pipeline import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 
 def parse_args():
@@ -43,7 +41,7 @@ def parse_args():
     parser.add_argument("--height", type=int, default=1024, help="Image height.")
     parser.add_argument("--width", type=int, default=768, help="Image width.")
     # latent diffusion 관련 파라미터
-    parser.add_argument("--num_train_timesteps", type=int, default=1000, help="Number of diffusion steps for training.")
+    parser.add_argument("--num_train_timesteps", type=int, default=50, help="Number of diffusion steps for training.")
     parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
     parser.add_argument("--attn_ckpt_version", type=str, default="mix", help="Version of the attention checkpoint.")
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
@@ -53,6 +51,7 @@ def parse_args():
         default=50,
         help="Number of inference steps to perform.",
     )
+    parser.add_argument("--use_fp16", default=True, help="Use FP16 precision for training.")
     args = parser.parse_args()
     return args
 
@@ -154,7 +153,7 @@ def main():
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
 
-    pipeline = CatVTONPipeline(
+    pipeline = CatVTONPipeline_Train(
         base_ckpt, 
         attn_ckpt,
         attn_ckpt_version,
@@ -184,7 +183,10 @@ def main():
     # 4. 옵티마이저 및 손실 함수 정의
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
-    loss_fn = loss_fn.to(torch.float16)
+    precision = torch.float32
+    if args.use_fp16:
+        precision = torch.float16
+    loss_fn = loss_fn.to(precision)
 
     dataset = VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
@@ -200,9 +202,9 @@ def main():
             person = batch["person"]
             cloth  = batch["cloth"]
             mask   = batch["mask"]
-            person = person.to(torch.float16).to(device)
-            cloth  = cloth.to(torch.float16).to(device)
-            mask   = mask.to(torch.float16).to(device)
+            person = person.to(precision).to(device)
+            cloth  = cloth.to(precision).to(device)
+            mask   = mask.to(precision).to(device)
 
             image = pipeline(
                 person,
