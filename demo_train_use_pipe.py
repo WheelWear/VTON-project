@@ -16,7 +16,7 @@ from diffusers.image_processor import VaeImageProcessor
 
 
 from PIL import Image
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 
 # 윈도우에서 wandb 사용 시 필요한 코드
@@ -29,10 +29,11 @@ sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 사용할 파이프라인 고르기
 """
 # from model.pipeline import CatVTONPipeline as CatVTONPipeline_Train
-# from model.pipeline_one_timestep import CatVTONPipeline_Train
+from model.pipeline_one_timestep import CatVTONPipeline_Train
 # from model.pipeline_multi_timestep import CatVTONPipeline_Train
-from model.pipeline_minimal import CatVTONPipeline_Train
+# from model.pipeline_minimal import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
+from accelerate import Accelerator
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA Fine-tuning for Latent Diffusion based CatVTON")
@@ -121,7 +122,7 @@ class TrainDataset(Dataset):
 
 class VITONHDTrainDataset(TrainDataset):
     def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_pairs_sample.txt')
+        pair_txt = os.path.join(self.args.data_root_path, 'train_pairs.txt')
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
@@ -153,6 +154,8 @@ def main():
     wandb.init(project="VTON-project", config=vars(args))
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    accelerator = Accelerator(mixed_precision="fp16")
+    device = accelerator.device
 
     # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
     base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
@@ -161,8 +164,8 @@ def main():
 
     
     precision = torch.float32
-    if args.use_fp16:
-        precision = torch.float16
+    # if args.use_fp16:
+    #     precision = torch.float16
 
     pipeline = CatVTONPipeline_Train(
         base_ckpt, 
@@ -185,7 +188,7 @@ def main():
 
     model = pipeline.unet 
     model = model.to(device)
-    model = model.to(precision)
+    # model = model.to(precision)
 
     # 2. LoRA 설정 및 적용
     lora_config = LoraConfig(
@@ -196,7 +199,7 @@ def main():
     )
     model = get_peft_model(model, lora_config)
     model = model.to(device)
-    model = model.to(precision)
+    # model = model.to(precision)
     print("LoRA 적용 완료. 현재 학습 파라미터 수:",
           sum(p.numel() for p in model.parameters() if p.requires_grad))
     pipeline.unet = model
@@ -209,49 +212,55 @@ def main():
 
     dataset = VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    
+    # Accelerator로 모델, 옵티마이저, 데이터로더 준비
+    model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+
     generator = torch.Generator(device='cuda').manual_seed(args.seed)
     best_loss = float("inf")
     best_epoch = -1
     global_step = 0
     model.train()
+
+    device = accelerator.device
     for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
         total_loss = 0.0
         for batch in dataloader:
+            optimizer.zero_grad()
             # 배치에서 person, cloth, mask 텐서를 device로 이동
-            person = batch["person"].to(precision)
-            cloth  = batch["cloth"].to(precision)
-            mask   = batch["mask"].to(precision)
-            person = person.to(device)
-            cloth  = cloth.to(device)
-            mask   = mask.to(device)
+            person = batch["person"]
+            cloth  = batch["cloth"]
+            mask   = batch["mask"]
+
 
             # vae encodings
             # latent로
-            image_latent = pipeline(
-                person,
-                cloth,
-                mask,
-                guidance_scale=args.guidance_scale,
-                height=args.height,
-                width=args.width,
-                generator=generator,
-                num_inference_steps = args.num_inference_steps,
-            )
-            # person 이미지의 VAE 인코딩 계산 (VAE는 고정이므로 no_grad 사용)
-            with torch.no_grad():
-                person_latent = compute_vae_encodings(person, pipeline.vae)
-                person_latent = person_latent.to(dtype=precision)
-                # image_latent = image_latent.to(dtype=precision)
-                print("person_latent dtype", person_latent.dtype)
-                print("image_latent dtype", image_latent.dtype)
-            
-            # 두 latent의 shape이 동일한지 확인 (print 혹은 assert 활용)
-            print("\n person_latent shape:", person_latent.shape, "image_latent shape:", image_latent.shape)
-            
-            # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
-            loss = loss_fn(person_latent, image_latent)
+            with accelerator.autocast():
+                image_latent = pipeline(
+                    person,
+                    cloth,
+                    mask,
+                    guidance_scale=args.guidance_scale,
+                    height=args.height,
+                    width=args.width,
+                    generator=generator,
+                    num_inference_steps = args.num_inference_steps,
+                )
+                # person 이미지의 VAE 인코딩 계산 (VAE는 고정이므로 no_grad 사용)
+                with torch.no_grad():
+                    person_latent = compute_vae_encodings(person, pipeline.vae)
+                    
+                    # image_latent = image_latent.to(dtype=precision)
+                    # print("person_latent dtype", person_latent.dtype)
+                    # print("image_latent dtype", image_latent.dtype)
+                
+                # 두 latent의 shape이 동일한지 확인 (print 혹은 assert 활용)
+                # print("\n person_latent shape:", person_latent.shape, "image_latent shape:", image_latent.shape)
+                
+                # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
+                loss = loss_fn(person_latent, image_latent)
             print("loss :", loss)
-            loss.backward()
+            accelerator.backward(loss)
             optimizer.step()
 
             total_loss += loss.item()
