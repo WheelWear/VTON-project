@@ -41,14 +41,14 @@ def parse_args():
     parser.add_argument("--height", type=int, default=1024, help="Image height.")
     parser.add_argument("--width", type=int, default=768, help="Image width.")
     # latent diffusion 관련 파라미터
-    parser.add_argument("--num_train_timesteps", type=int, default=50, help="Number of diffusion steps for training.")
+    parser.add_argument("--num_train_timesteps", type=int, default=1000, help="Number of diffusion steps for training.")
     parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
     parser.add_argument("--attn_ckpt_version", type=str, default="mix", help="Version of the attention checkpoint.")
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
     parser.add_argument(
         "--num_inference_steps",
         type=int,
-        default=1,
+        default=999,
         help="Number of inference steps to perform.",
     )
     parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
@@ -153,18 +153,19 @@ def main():
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
 
-    pipeline = CatVTONPipeline_Train(
-        base_ckpt, 
-        attn_ckpt,
-        attn_ckpt_version,
-        weight_dtype=torch.float32,
-        device="cuda",
-        skip_safety_check=True,
-    )
+    
     precision = torch.float32
     if args.use_fp16:
         precision = torch.float16
 
+    pipeline = CatVTONPipeline_Train(
+        base_ckpt, 
+        attn_ckpt,
+        attn_ckpt_version,
+        weight_dtype=precision,
+        device="cuda",
+        skip_safety_check=True,
+    )
     model = pipeline.unet 
     model.to(device)
     model = model.to(precision)
@@ -198,9 +199,9 @@ def main():
         total_loss = 0.0
         for batch in dataloader:
             # 배치에서 person, cloth, mask 텐서를 device로 이동
-            person = batch["person"]
-            cloth  = batch["cloth"]
-            mask   = batch["mask"]
+            person = batch["person"].to(precision)
+            cloth  = batch["cloth"].to(precision)
+            mask   = batch["mask"].to(precision)
             person = person.to(device)
             cloth  = cloth.to(device)
             mask   = mask.to(device)

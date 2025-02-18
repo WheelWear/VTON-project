@@ -179,13 +179,12 @@ class CatVTONPipeline_Train:
                 inpainting_latent_model_input = torch.cat([non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat], dim=1)
                 # predict the noise residual
                 # print("model_input",inpainting_latent_model_input.shape) # ([2, 9, 256, 96])
-                with torch.enable_grad():
-                    noise_pred= self.unet(
-                    inpainting_latent_model_input,
-                    t.to(self.device),
-                    encoder_hidden_states=None, 
-                    return_dict=False,
-                    )[0]
+                noise_pred= self.unet(
+                inpainting_latent_model_input,
+                t.to(self.device),
+                encoder_hidden_states=None, 
+                return_dict=False,
+                )[0]
                 # print("model_ouput", noise_pred.shape) #([2, 4, 256, 96])
                 # perform guidance
                 if do_classifier_free_guidance:
@@ -383,123 +382,6 @@ class CatVTONPipeline:
                     inpainting_latent_model_input,
                     t.to(self.device),
                     encoder_hidden_states=None, # FIXME
-                    return_dict=False,
-                )[0]
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.noise_scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs
-                ).prev_sample
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps
-                    and (i + 1) % self.noise_scheduler.order == 0
-                ):
-                    progress_bar.update()
-
-        # Decode the final latents
-        latents = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
-        latents = 1 / self.vae.config.scaling_factor * latents
-        image = self.vae.decode(latents.to(self.device, dtype=self.weight_dtype)).sample
-        image = (image / 2 + 0.5).clamp(0, 1)
-        # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
-        image = image.cpu().permute(0, 2, 3, 1).float().numpy()
-        image = numpy_to_pil(image)
-        
-        # Safety Check
-        if not self.skip_safety_check:
-            current_script_directory = os.path.dirname(os.path.realpath(__file__))
-            nsfw_image = os.path.join(os.path.dirname(current_script_directory), 'resource', 'img', 'NSFW.jpg')
-            nsfw_image = PIL.Image.open(nsfw_image).resize(image[0].size)
-            image_np = np.array(image)
-            _, has_nsfw_concept = self.run_safety_checker(image=image_np)
-            for i, not_safe in enumerate(has_nsfw_concept):
-                if not_safe:
-                    image[i] = nsfw_image
-        return image
-
-
-class CatVTONPix2PixPipeline(CatVTONPipeline):
-    def auto_attn_ckpt_load(self, attn_ckpt, version):
-        # TODO: Temperal fix for the model version
-        if os.path.exists(attn_ckpt):
-            load_checkpoint_in_model(self.attn_modules, os.path.join(attn_ckpt, version, 'attention'))
-        else:
-            repo_path = snapshot_download(repo_id=attn_ckpt)
-            print(f"Downloaded {attn_ckpt} to {repo_path}")
-            load_checkpoint_in_model(self.attn_modules, os.path.join(repo_path, version, 'attention'))
-    
-    def check_inputs(self, image, condition_image, width, height):
-        if isinstance(image, torch.Tensor) and isinstance(condition_image, torch.Tensor) and isinstance(torch.Tensor):
-            return image, condition_image
-        image = resize_and_crop(image, (width, height))
-        condition_image = resize_and_padding(condition_image, (width, height))
-        return image, condition_image
-
-    @torch.no_grad()
-    def __call__(
-        self, 
-        image: Union[PIL.Image.Image, torch.Tensor],
-        condition_image: Union[PIL.Image.Image, torch.Tensor],
-        num_inference_steps: int = 50,
-        guidance_scale: float = 2.5,
-        height: int = 1024,
-        width: int = 768,
-        generator=None,
-        eta=1.0,
-        **kwargs
-    ):
-        concat_dim = -1
-        # Prepare inputs to Tensor
-        image, condition_image = self.check_inputs(image, condition_image, width, height)
-        image = prepare_image(image).to(self.device, dtype=self.weight_dtype)
-        condition_image = prepare_image(condition_image).to(self.device, dtype=self.weight_dtype)
-        # VAE encoding
-        image_latent = compute_vae_encodings(image, self.vae)
-        condition_latent = compute_vae_encodings(condition_image, self.vae)
-        del image, condition_image
-        # Concatenate latents
-        condition_latent_concat = torch.cat([image_latent, condition_latent], dim=concat_dim)
-        # Prepare noise
-        latents = randn_tensor(
-            condition_latent_concat.shape,
-            generator=generator,
-            device=condition_latent_concat.device,
-            dtype=self.weight_dtype,
-        )
-        # Prepare timesteps
-        self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
-        timesteps = self.noise_scheduler.timesteps
-        latents = latents * self.noise_scheduler.init_noise_sigma
-        # Classifier-Free Guidance
-        if do_classifier_free_guidance := (guidance_scale > 1.0):
-            condition_latent_concat = torch.cat(
-                [
-                    torch.cat([image_latent, torch.zeros_like(condition_latent)], dim=concat_dim),
-                    condition_latent_concat,
-                ]
-            )
-
-        # Denoising loop
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-        num_warmup_steps = (len(timesteps) - num_inference_steps * self.noise_scheduler.order)
-        with tqdm.tqdm(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = (torch.cat([latents] * 2) if do_classifier_free_guidance else latents)
-                latent_model_input = self.noise_scheduler.scale_model_input(latent_model_input, t)
-                # prepare the input for the inpainting model
-                p2p_latent_model_input = torch.cat([latent_model_input, condition_latent_concat], dim=1)
-                # predict the noise residual
-                noise_pred= self.unet(
-                    p2p_latent_model_input,
-                    t.to(self.device),
-                    encoder_hidden_states=None, 
                     return_dict=False,
                 )[0]
                 # perform guidance
