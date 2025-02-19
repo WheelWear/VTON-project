@@ -18,7 +18,7 @@ from diffusers.image_processor import VaeImageProcessor
 import numpy as np
 import cv2 
 from PIL import Image
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 #metric
 from metrics.psnr_ssim import calculate_psnr, calculate_ssim
@@ -418,11 +418,9 @@ def main():
 
                         gt_person = to_pil_image(person)
                         for i, (gt_img, pred_img) in enumerate(zip(gt_person, results)):
-                            print("gt_img", gt_img.shape)
-                            print("pred_img", pred_img.shape)
-                            return
-                            gt_np = gt_img
-                            pred_np = pred_img
+
+                            gt_np = np.array(gt_img)
+                            pred_np = np.array(pred_img)
                             # psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
                             # ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
                             # val_psnr.append(psnr_val)
@@ -446,14 +444,14 @@ def main():
             wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips, "epoch": epoch+1})
 
             # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
-            if avg_lpips < best_lpips:
-                best_lpips = avg_lpips
+            if avg_lpips < best_LPIPS:
+                best_LPIPS = avg_lpips
                 best_epoch = epoch + 1
                 checkpoint_dir = os.path.join(args.output_dir, "best_checkpoint")
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 accelerator.save_state(checkpoint_dir)
-                print(f"최적 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_lpips:.4f})")
-                wandb.run.summary["best_lpips"] = best_lpips
+                print(f"최적 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
+                wandb.run.summary["best_lpips"] = best_LPIPS
                 wandb.run.summary["best_epoch"] = best_epoch
 
             model.train()
