@@ -507,7 +507,7 @@ def main():
             best_epoch = epoch + 1
 
             checkpoint_path = os.path.join(args.output_dir, f"best_loss_lora_model_{best_epoch}.pt")
-            os.makedirs(checkpoint_path, exist_ok=True)
+            os.makedirs(args.output_dir, exist_ok=True)
             lora_state_dict = get_peft_model_state_dict(model)
             torch.save(lora_state_dict, checkpoint_path)
             print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
