@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
     parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
     parser.add_argument("--accumulation_steps", type=int, default=4, help="Number of steps to accumulate gradients before update.")
+    parser.add_argument("--use_maked_loss", default=False, help="Use masked loss for training.")
     args = parser.parse_args()
     return args
 
@@ -92,7 +93,6 @@ class Custom_VITONHDTrainDataset(TrainDataset):
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
-        #self.args.data_root_path = os.path.join(self.args.data_root_path, "train")
         output_dir = os.path.join(
             self.args.output_dir, 
             "vitonhd", 
@@ -108,13 +108,93 @@ class Custom_VITONHDTrainDataset(TrainDataset):
             data.append({
                 'person_name': person_img,
                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
-                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img' ,cloth_img),
-                'cloth': os.path.join(self.args.data_root_path, 'cloth', 'upper_img' ,cloth_img),
+                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
+                'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
                 'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
-                'mask': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
             })
         return data
 
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        person = Image.open(data['person'])
+
+        # 상의(cloth)와 하의(cloth_l) 중 랜덤 선택
+        if random.random() < 0.5:
+            cloth = Image.open(data['cloth_u'])  # 상의
+            mask = Image.open(data['mask_u'])    # 상의 마스크
+        else:
+            cloth = Image.open(data['cloth_l'])  # 하의
+            mask = Image.open(data['mask_l'])    # 하의 마스크
+
+        # Horizontal flip 적용
+        if random.random() < 0.5:
+            person = person.transpose(Image.FLIP_LEFT_RIGHT)
+            cloth = cloth.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+
+        return {
+            'index': idx,
+            'person_name': data['person_name'],
+            'person': self.vae_processor.preprocess(person, self.args.height, self.args.width)[0],
+            'cloth': self.vae_processor.preprocess(cloth, self.args.height, self.args.width)[0],
+            'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
+        }
+
+class Custom_VITONHDTestDataset(TrainDataset):
+    def load_data(self):
+        pair_txt = os.path.join(self.args.data_root_path, 'test_unpair.txt')
+        assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
+        with open(pair_txt, 'r') as f:
+            lines = f.readlines()
+        output_dir = os.path.join(
+            self.args.output_dir, 
+            "vitonhd", 
+            'unpaired' if not self.args.eval_pair else 'paired'
+        )
+        data = []
+        for line in lines:
+            person_img, cloth_img = line.strip().split(" ")
+            if os.path.exists(os.path.join(output_dir, person_img)):
+                continue
+            if self.args.eval_pair:
+                cloth_img = person_img
+            data.append({
+                'person_name': person_img,
+                'person': os.path.join(self.args.data_root_path, 'image', person_img),
+                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
+                'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
+                'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
+                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+            })
+        return data
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        person = Image.open(data['person'])
+
+        # 상의(cloth)와 하의(cloth_l) 중 랜덤 선택
+        if random.random() < 0.5:
+            cloth = Image.open(data['cloth_u'])  # 상의
+            mask = Image.open(data['mask_u'])    # 상의 마스크
+        else:
+            cloth = Image.open(data['cloth_l'])  # 하의
+            mask = Image.open(data['mask_l'])    # 하의 마스크
+
+        # Horizontal flip 적용
+        if random.random() < 0.5:
+            person = person.transpose(Image.FLIP_LEFT_RIGHT)
+            cloth = cloth.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+
+        return {
+            'index': idx,
+            'person_name': data['person_name'],
+            'person': self.vae_processor.preprocess(person, self.args.height, self.args.width)[0],
+            'cloth': self.vae_processor.preprocess(cloth, self.args.height, self.args.width)[0],
+            'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
+        }
+    
 # class VITONHDTestDataset(TrainDataset):
 #     def load_data(self):
 #         pair_txt = os.path.join(self.args.data_root_path, 'test_pairs_unpaired.txt')
@@ -262,8 +342,20 @@ def main():
                     )
                     with torch.no_grad():
                         person_latent = compute_vae_encodings(person, pipeline.vae)
-
-                    loss = loss_fn(person_latent, image_latent)
+                    
+                    # masked loss 사용 가능하게 추가
+                    if args.use_maked_loss:
+                        # mask를 latent 크기에 맞게 보간
+                        mask_latent = torch.nn.functional.interpolate(
+                            mask, size=person_latent.shape[-2:], mode="nearest"
+                        )
+                        # masked된 부분만 손실 계산
+                        masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
+                        masked_image_latent = image_latent * (mask_latent < 0.5)
+                        loss = loss_fn(masked_person_latent, masked_image_latent)
+                    else:
+                        # 기본 전체 손실
+                        loss = loss_fn(person_latent, image_latent)
                 
                 # 그라디언트 계산
                 accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
