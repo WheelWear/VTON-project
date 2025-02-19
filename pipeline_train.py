@@ -113,7 +113,7 @@ class CatVTONPipeline_Train:
         image: Union[PIL.Image.Image, torch.Tensor],
         condition_image: Union[PIL.Image.Image, torch.Tensor],
         mask: Union[PIL.Image.Image, torch.Tensor],
-        num_inference_steps: int = 1,
+        num_inference_steps: int = 50,
         guidance_scale: float = 2.5,
         height: int = 1024,
         width: int = 768,
@@ -121,9 +121,6 @@ class CatVTONPipeline_Train:
         eta=1.0,
         **kwargs
     ):
-        """
-        
-        """
         concat_dim = -2  # FIXME: y axis concat (원래 코드와 동일)
         # 1. 입력 전처리: PIL 또는 Tensor를 받아 지정된 크기로 변환
         image, condition_image, mask = self.check_inputs(image, condition_image, mask, width, height)
@@ -160,13 +157,7 @@ class CatVTONPipeline_Train:
         # scale_model_input 등에는 배치별 t를 사용 (모두 동일한 값)
         t_batch = torch.full((batch_size,), t_val, device=self.device)
 
-
-        """ 
-        생성되는 방식 기존 코드 유지 randn_like->randn_tensor
-        """
         noise = randn_tensor(masked_latent_concat.shape,generator=generator,device=masked_latent_concat.device,dtype=self.weight_dtype,)
-
-        # noise = torch.randn_like(masked_latent_concat)
         # print("t_val : ", t_val)
         # print("t_batch : ", t_batch)
         # masked_latent_concat에 노이즈 추가 -> (B, C, 2H, W)
@@ -211,10 +202,7 @@ class CatVTONPipeline_Train:
         if do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        # 10. 한 번의 denoising step: scheduler.step을 사용하여 노이즈 제거된 latent 추출
-        # extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-        # denoised_latent = self.noise_scheduler.step(noise_pred, t_batch, noisy_latent, **extra_step_kwargs).prev_sample
-        # 11. 최종 출력 shape 복원: 높이 차원(-2)에서 원래 H로 복원 (B, C, 2H -> B, C, H)
+        # 10. 최종 출력 shape 복원: 높이 차원(-2)에서 원래 H로 복원 (B, C, 2H -> B, C, H)
         noise_pred = noise_pred.split(noise_pred.shape[concat_dim] // 2, dim=concat_dim)[0]
         noise_pred = 1 / self.vae.config.scaling_factor * noise_pred
         # 12. float16 으로 변환 후 리턴

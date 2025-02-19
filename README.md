@@ -1,6 +1,11 @@
 # VTON-project
 
-
+## Prepare dataset
+- unzip and rename
+```
+unzip dataset_v{version}.zip .
+mv dataset_v{version} dataset
+```
 ## 파인튜닝을 위한 데이터셋 구축 (앉아있는 자세)
 ```
 dataset/

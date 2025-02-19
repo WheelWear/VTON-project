@@ -28,10 +28,8 @@ sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 """
 사용할 파이프라인 고르기
 """
-# from model.pipeline import CatVTONPipeline as CatVTONPipeline_Train
-from model.pipeline_one_timestep import CatVTONPipeline_Train
-# from model.pipeline_multi_timestep import CatVTONPipeline_Train
-# from model.pipeline_minimal import CatVTONPipeline_Train
+
+from model.pipeline_train import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from accelerate import Accelerator
 
@@ -47,17 +45,9 @@ def parse_args():
     parser.add_argument("--eval_pair", default=False, help="Evaluate on paired images.")
     parser.add_argument("--height", type=int, default=1024, help="Image height.")
     parser.add_argument("--width", type=int, default=768, help="Image width.")
-    # latent diffusion 관련 파라미터
-    parser.add_argument("--num_train_timesteps", type=int, default=1000, help="Number of diffusion steps for training.")
     parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
     parser.add_argument("--attn_ckpt_version", type=str, default="mix", help="Version of the attention checkpoint.")
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
-    parser.add_argument(
-        "--num_inference_steps",
-        type=int,
-        default=999,
-        help="Number of inference steps to perform.",
-    )
     parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
     args = parser.parse_args()
     return args
@@ -179,10 +169,14 @@ class VITONHDTrainDataset(TrainDataset):
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
+    if args.use_fp16:
+        precision = "fp16"
+    else:
+        precision = "fp32"
     wandb.init(project="VTON-project", config=vars(args))
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    accelerator = Accelerator(mixed_precision="fp16")
+    accelerator = Accelerator(mixed_precision=precision)
     device = accelerator.device
 
     # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
@@ -190,16 +184,10 @@ def main():
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
 
-    
-    precision = torch.float32
-    # if args.use_fp16:
-    #     precision = torch.float16
-
     pipeline = CatVTONPipeline_Train(
         base_ckpt, 
         attn_ckpt,
         attn_ckpt_version,
-        weight_dtype=precision,
         device="cuda",
         skip_safety_check=True,
     )
@@ -216,7 +204,6 @@ def main():
 
     model = pipeline.unet 
     model = model.to(device)
-    # model = model.to(precision)
 
     # 2. LoRA 설정 및 적용
     lora_config = LoraConfig(
@@ -227,16 +214,14 @@ def main():
     )
     model = get_peft_model(model, lora_config)
     model = model.to(device)
-    # model = model.to(precision)
+
     print("LoRA 적용 완료. 현재 학습 파라미터 수:",
           sum(p.numel() for p in model.parameters() if p.requires_grad))
     pipeline.unet = model
 
-    
     # 4. 옵티마이저 및 손실 함수 정의
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
-    loss_fn = loss_fn.to(precision)
 
     # dataset = VITONHDTrainDataset(args)
     dataset = Custom_VITONHDTrainDataset(args)
@@ -256,14 +241,10 @@ def main():
         total_loss = 0.0
         for batch in dataloader:
             optimizer.zero_grad()
-            # 배치에서 person, cloth, mask 텐서를 device로 이동
             person = batch["person"]
             cloth  = batch["cloth"]
             mask   = batch["mask"]
 
-
-            # vae encodings
-            # latent로
             with accelerator.autocast():
                 image_latent = pipeline(
                     person,
@@ -273,22 +254,12 @@ def main():
                     height=args.height,
                     width=args.width,
                     generator=generator,
-                    num_inference_steps = args.num_inference_steps,
                 )
-                # person 이미지의 VAE 인코딩 계산 (VAE는 고정이므로 no_grad 사용)
                 with torch.no_grad():
                     person_latent = compute_vae_encodings(person, pipeline.vae)
-                    
-                    # image_latent = image_latent.to(dtype=precision)
-                    # print("person_latent dtype", person_latent.dtype)
-                    # print("image_latent dtype", image_latent.dtype)
-                
-                # 두 latent의 shape이 동일한지 확인 (print 혹은 assert 활용)
-                # print("\n person_latent shape:", person_latent.shape, "image_latent shape:", image_latent.shape)
-                
+
                 # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
                 loss = loss_fn(person_latent, image_latent)
-            # print("loss :", loss)
             accelerator.backward(loss)
             optimizer.step()
 
@@ -297,7 +268,9 @@ def main():
             wandb.log({"train_loss": loss.item(), "global_step": global_step})
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
-
+        """
+            형이 수정할 부분 모델 저장 코드
+        """
         os.makedirs(args.output_dir, exist_ok=True)
         checkpoint_path = os.path.join(args.output_dir, f"best_model_{epoch + 1}.pt")
         torch.save(model.state_dict(), checkpoint_path)
@@ -313,7 +286,7 @@ def main():
             # wandb에 베스트 모델 업데이트 기록
             wandb.run.summary["best_loss"] = best_loss
             wandb.run.summary["best_epoch"] = best_epoch
-            wandb.save(checkpoint_path)
+
     print("학습 완료.")
     wandb.finish()
 
