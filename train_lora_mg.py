@@ -263,6 +263,7 @@ def main():
     base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
+    lpips_model_name = 'vgg'
 
     pipeline = CatVTONPipeline_Train(
         base_ckpt, 
@@ -322,8 +323,6 @@ def main():
     best_epoch = -1
     global_step = 0
     model.train()
-
-    lpips_model_name = 'vgg'
     
     # lpips
     if lpips_model_name == 'vgg':
@@ -385,15 +384,8 @@ def main():
         
         os.makedirs(args.output_dir, exist_ok=True)
         
-        
-        # # 1 에폭마다 모델 저장
-        # checkpoint_path = os.path.join(args.output_dir, f"model_{epoch + 1}.pt")
-        # torch.save(model.state_dict(), checkpoint_path)
-        # print(f"모델 저장: {checkpoint_path} (Epoch {epoch + 1})")
-
-    
         # 5 에폭마다 모델 각각 저장
-        if (epoch+1) % 1 == 0:
+        if (epoch+1) % 5 == 0:
             # validation
             model.eval()
             val_psnr, val_ssim, val_lpips = [], [], []
@@ -447,10 +439,13 @@ def main():
             if avg_lpips < best_LPIPS:
                 best_LPIPS = avg_lpips
                 best_epoch = epoch + 1
+
                 checkpoint_dir = os.path.join(args.output_dir, "best_checkpoint")
                 os.makedirs(checkpoint_dir, exist_ok=True)
-                accelerator.save_state(checkpoint_dir)
-                print(f"최적 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
+                lora_state_dict = get_peft_model_state_dict(model)
+                torch.save(lora_state_dict, os.path.join(checkpoint_dir, f"best_lpips_lora_model_{best_epoch}.pt"))
+                print(f"lpips best lora 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
+                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
                 wandb.run.summary["best_lpips"] = best_LPIPS
                 wandb.run.summary["best_epoch"] = best_epoch
 
@@ -462,10 +457,12 @@ def main():
             best_loss = avg_loss
             best_epoch = epoch + 1
 
-            checkpoint_path = os.path.join(args.output_dir, f"best_base_model_{best_epoch}.pt")
-            torch.save(model.state_dict(), checkpoint_path)
-            print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
-            
+            checkpoint_path = os.path.join(args.output_dir, f"best_loss_lora_model_{best_epoch}.pt")
+            os.makedirs(checkpoint_path, exist_ok=True)
+            lora_state_dict = get_peft_model_state_dict(model)
+            torch.save(lora_state_dict, checkpoint_path)
+            print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+            wandb.log({"best_loss": best_loss, "best_epoch": best_epoch})
             # wandb에 베스트 모델 업데이트 기록
             wandb.run.summary["best_loss"] = best_loss
             wandb.run.summary["best_epoch"] = best_epoch
