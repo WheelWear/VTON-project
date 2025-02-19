@@ -10,4 +10,4 @@ python demo_train_use_pipe.py  --data_root_path /content --output_dir ./ckpt --u
 python demo_train_use_pipe.py  --data_root_path ./viton-hd --output_dir ./ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4 --num_inference_steps 2 --use_tf32 False
 
 #for 1 timestep
-python demo_train_use_pipe.py  --data_root_path ./dataset --output_dir ./ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4  --use_tf32 False  
+python demo_train_use_pipe.py  --data_root_path ./dataset --output_dir ./experiments/ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4  --use_tf32 False  
