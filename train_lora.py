@@ -482,8 +482,7 @@ def main():
             avg_ssim = np.mean(val_ssim)
             avg_lpips = np.mean(val_lpips)
             print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
-            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips, "epoch": epoch+1})
-
+            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips}, step=epoch+1)
             # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
             if avg_lpips < best_LPIPS:
                 best_LPIPS = avg_lpips
@@ -494,7 +493,7 @@ def main():
                 lora_state_dict = get_peft_model_state_dict(model)
                 torch.save(lora_state_dict, os.path.join(checkpoint_dir, f"best_lpips_lora_model_{best_epoch}.pt"))
                 print(f"lpips best lora 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
-                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
+                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch}, step=epoch+1)
                 wandb.run.summary["best_lpips"] = best_LPIPS
                 wandb.run.summary["best_epoch"] = best_epoch
 
