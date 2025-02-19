@@ -159,7 +159,14 @@ class CatVTONPipeline_Train:
         # t = torch.randint(0, num_timesteps, (batch_size,), device=self.device)
         # scale_model_input 등에는 배치별 t를 사용 (모두 동일한 값)
         t_batch = torch.full((batch_size,), t_val, device=self.device)
-        noise = torch.randn_like(masked_latent_concat)
+
+
+        """ 
+        생성되는 방식 기존 코드 유지 randn_like->randn_tensor
+        """
+        noise = randn_tensor(masked_latent_concat.shape,generator=generator,device=masked_latent_concat.device,dtype=self.weight_dtype,)
+
+        # noise = torch.randn_like(masked_latent_concat)
         # print("t_val : ", t_val)
         # print("t_batch : ", t_batch)
         # masked_latent_concat에 노이즈 추가 -> (B, C, 2H, W)
@@ -192,7 +199,7 @@ class CatVTONPipeline_Train:
             [non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat],
             dim=1
         )
-        print("unet dtype", self.unet.dtype)
+        # print("unet dtype", self.unet.dtype)
         # 9. UNet forward: 최종 입력은 (B, 3C, 2H, W) (예: B, c, 256, 96; 여기서 2H=256)
         noise_pred = self.unet(
             inpainting_latent_model_input,
@@ -200,7 +207,7 @@ class CatVTONPipeline_Train:
             encoder_hidden_states=None,
             return_dict=False,
         )[0]
-        print("before noise_pred dtype", noise_pred.dtype)
+        # print("before noise_pred dtype", noise_pred.dtype)
         if do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)

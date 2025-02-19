@@ -259,7 +259,7 @@ def main():
                 
                 # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
                 loss = loss_fn(person_latent, image_latent)
-            print("loss :", loss)
+            # print("loss :", loss)
             accelerator.backward(loss)
             optimizer.step()
 

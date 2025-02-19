@@ -8,3 +8,6 @@ python ./demo_train_use_pipe.py --data_root_path ./viton-hd --output_dir ./ckpt 
 python demo_train_use_pipe.py  --data_root_path /content --output_dir ./ckpt --use_fp16 False --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4 --num_inference_steps 999
 # 스탭 2
 python demo_train_use_pipe.py  --data_root_path ./viton-hd --output_dir ./ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4 --num_inference_steps 2 --use_tf32 False
+
+#for 1 timestep
+python demo_train_use_pipe.py  --data_root_path ./viton-hd --output_dir ./ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4  --use_tf32 False  
