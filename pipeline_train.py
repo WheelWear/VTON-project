@@ -27,12 +27,12 @@ class CatVTONPipeline_Train:
         attn_ckpt, 
         attn_ckpt_version="mix",
         weight_dtype=torch.float32,
-        device='cuda',
+        device="cuda",
         compile=False,
         skip_safety_check=False,
         use_tf32=True,
     ):
-        self.device = device
+        self.device = torch.device(device)
         self.weight_dtype = weight_dtype
         self.skip_safety_check = skip_safety_check
 
@@ -118,6 +118,7 @@ class CatVTONPipeline_Train:
         height: int = 1024,
         width: int = 768,
         generator=None,
+        is_train=True, 
         eta=1.0,
         **kwargs
     ):
@@ -148,66 +149,92 @@ class CatVTONPipeline_Train:
         # print("masked_latent_concat : ", masked_latent_concat.shape)
         # print("mask_latent_concat : ", mask_latent_concat.shape)
 
-        # 6. 노이즈 생성: masked_latent_concat의 shape에 맞추어 (B, C, 2H, W)
-        batch_size = masked_latent_concat.shape[0]
-        num_timesteps = self.noise_scheduler.config.num_train_timesteps
-        self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
-        t_val = int(torch.randint(0, num_timesteps, (1,), device=self.device))
-        # t = torch.randint(0, num_timesteps, (batch_size,), device=self.device)
-        # scale_model_input 등에는 배치별 t를 사용 (모두 동일한 값)
-        t_batch = torch.full((batch_size,), t_val, device=self.device)
-
-        noise = randn_tensor(masked_latent_concat.shape,generator=generator,device=masked_latent_concat.device,dtype=self.weight_dtype,)
-        # print("t_val : ", t_val)
-        # print("t_batch : ", t_batch)
-        # masked_latent_concat에 노이즈 추가 -> (B, C, 2H, W)
-        noisy_latent = self.noise_scheduler.add_noise(masked_latent_concat, noise, t_batch)
-        
-        # 7. Classifier-Free Guidance 적용 (guidance_scale > 1.0 인 경우)
-        do_classifier_free_guidance = guidance_scale > 1.0
-        if do_classifier_free_guidance:
-            # guidance branch: 기존 masked_latent와 0 텐서를 concat한 것을 배치 차원에서 추가합니다.
-            masked_latent_concat = torch.cat(
-                [
+        if is_train:
+            # 학습 모드: 단일 timestep 노이즈 예측
+            batch_size = masked_latent_concat.shape[0]
+            num_timesteps = self.noise_scheduler.config.num_train_timesteps
+            self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
+            t_val = int(torch.randint(0, num_timesteps, (1,), device=self.device))
+            t_batch = torch.full((batch_size,), t_val, device=self.device)
+            noise = randn_tensor(masked_latent_concat.shape, generator=generator, device=self.device, dtype=self.weight_dtype)
+            noisy_latent = self.noise_scheduler.add_noise(masked_latent_concat, noise, t_batch)
+            
+            do_classifier_free_guidance = guidance_scale > 1.0
+            if do_classifier_free_guidance:
+                masked_latent_concat = torch.cat([
                     torch.cat([masked_latent, torch.zeros_like(condition_latent)], dim=concat_dim),
                     masked_latent_concat,
-                ]
+                ])
+                mask_latent_concat = torch.cat([mask_latent_concat] * 2)
+                t = torch.cat([t_batch, t_batch], dim=0)
+            
+            non_inpainting_latent_model_input = (
+                torch.cat([noisy_latent] * 2, dim=0) if do_classifier_free_guidance else noisy_latent
             )
-            mask_latent_concat = torch.cat([mask_latent_concat] * 2)
-            # noisy_latent = torch.cat([noisy_latent] * 2, dim=0)
-            t = torch.cat([t_batch, t_batch], dim=0)
+            non_inpainting_latent_model_input = self.noise_scheduler.scale_model_input(non_inpainting_latent_model_input, t_batch)
+            inpainting_latent_model_input = torch.cat(
+                [non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat], dim=1
+            )
+            noise_pred = self.unet(
+                inpainting_latent_model_input,
+                t.to(self.device),
+                encoder_hidden_states=None,
+                return_dict=False,
+            )[0]
+            if do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            noise_pred = noise_pred.split(noise_pred.shape[concat_dim] // 2, dim=concat_dim)[0]
+            noise_pred = 1 / self.vae.config.scaling_factor * noise_pred
+            return noise_pred.to(dtype=self.weight_dtype)
         
-        # 8. UNet 입력 준비  
-        # 원래 코드는 guidance 적용 시 latents를 배치 차원에서 두 배로 만든 후 scale_model_input 적용합니다.
-        non_inpainting_latent_model_input = (
-            torch.cat([noisy_latent] * 2, dim=0)
-            if do_classifier_free_guidance
-            else noisy_latent
-        )
-        non_inpainting_latent_model_input = self.noise_scheduler.scale_model_input(non_inpainting_latent_model_input, t_batch)
-        # inpainting 모델 입력은 채널(dim=1)에서 연결
-        inpainting_latent_model_input = torch.cat(
-            [non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat],
-            dim=1
-        )
-        # print("unet dtype", self.unet.dtype)
-        # 9. UNet forward: 최종 입력은 (B, 3C, 2H, W) (예: B, c, 256, 96; 여기서 2H=256)
-        noise_pred = self.unet(
-            inpainting_latent_model_input,
-            t.to(self.device),
-            encoder_hidden_states=None,
-            return_dict=False,
-        )[0]
-        # print("before noise_pred dtype", noise_pred.dtype)
-        if do_classifier_free_guidance:
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        # 10. 최종 출력 shape 복원: 높이 차원(-2)에서 원래 H로 복원 (B, C, 2H -> B, C, H)
-        noise_pred = noise_pred.split(noise_pred.shape[concat_dim] // 2, dim=concat_dim)[0]
-        noise_pred = 1 / self.vae.config.scaling_factor * noise_pred
-        # 12. float16 으로 변환 후 리턴
-        noise_pred = noise_pred.to(dtype=self.weight_dtype)
-        return noise_pred
+        else:
+            # 추론 모드: 풀 denoising 루프
+            latents = randn_tensor(
+                masked_latent_concat.shape,
+                generator=generator,
+                device=self.device,
+                dtype=self.weight_dtype,
+            )
+            self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
+            timesteps = self.noise_scheduler.timesteps
+            latents = latents * self.noise_scheduler.init_noise_sigma
+            
+            do_classifier_free_guidance = guidance_scale > 1.0
+            if do_classifier_free_guidance:
+                masked_latent_concat = torch.cat([
+                    torch.cat([masked_latent, torch.zeros_like(condition_latent)], dim=concat_dim),
+                    masked_latent_concat,
+                ])
+                mask_latent_concat = torch.cat([mask_latent_concat] * 2)
+
+            extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+            for t in timesteps:
+                non_inpainting_latent_model_input = (
+                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                )
+                non_inpainting_latent_model_input = self.noise_scheduler.scale_model_input(non_inpainting_latent_model_input, t)
+                inpainting_latent_model_input = torch.cat(
+                    [non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat], dim=1
+                )
+                noise_pred = self.unet(
+                    inpainting_latent_model_input,
+                    t.to(self.device),
+                    encoder_hidden_states=None,
+                    return_dict=False,
+                )[0]
+                if do_classifier_free_guidance:
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                latents = self.noise_scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+
+            latents = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
+            latents = 1 / self.vae.config.scaling_factor * latents
+            with torch.no_grad():
+                image = self.vae.decode(latents.to(self.weight_dtype)).sample
+            image = (image / 2 + 0.5).clamp(0, 1)
+            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+            return numpy_to_pil(image)
 
 # 기존 추론용 파이프라인 건들지 마시오
 class CatVTONPipeline:
