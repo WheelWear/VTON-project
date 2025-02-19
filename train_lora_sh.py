@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument("--lora_rank", type=int, default=4, help="LoRA rank parameter.")
     parser.add_argument("--seed", type=int, default=555, help="Random seed for reproducibility.")
-    parser.add_argument("--eval_pair", default=False, help="Evaluate on paired images.")
+    parser.add_argument("--eval_pair", default=True, help="Evaluate on paired images.")
     parser.add_argument("--height", type=int, default=1024, help="Image height.")
     parser.add_argument("--width", type=int, default=768, help="Image width.")
     parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
