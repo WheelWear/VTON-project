@@ -1,7 +1,7 @@
 import os
 import sys
 import argparse
-
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,14 +10,20 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 
 from peft import get_peft_model, LoraConfig, TaskType
+from peft import get_peft_model_state_dict
 
 from diffusers import DDPMScheduler
 from diffusers.image_processor import VaeImageProcessor
 
-
+import numpy as np
+import cv2 
 from PIL import Image
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
+#metric
+from metrics.psnr_ssim import calculate_psnr, calculate_ssim
+from torchvision.transforms.functional import normalize
+import lpips
 
 # 윈도우에서 wandb 사용 시 필요한 코드
 import resource
@@ -42,13 +48,16 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument("--lora_rank", type=int, default=4, help="LoRA rank parameter.")
     parser.add_argument("--seed", type=int, default=555, help="Random seed for reproducibility.")
-    parser.add_argument("--eval_pair", default=False, help="Evaluate on paired images.")
+    parser.add_argument("--eval_pair",action="store_true", default=True, help="Evaluate on paired images.")
     parser.add_argument("--height", type=int, default=1024, help="Image height.")
     parser.add_argument("--width", type=int, default=768, help="Image width.")
     parser.add_argument("--use_tf32", default=False, help="Use TF32 precision for training.")
     parser.add_argument("--attn_ckpt_version", type=str, default="mix", help="Version of the attention checkpoint.")
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
     parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
+    parser.add_argument("--accumulation_steps", type=int, default=4, help="Number of steps to accumulate gradients before update.")
+    parser.add_argument("--use_maked_loss", action="store_true", default=True, help="Use masked loss for training.")
+    parser.add_argument("--num_inference_steps", type=int, default=50, help="Number of inference steps for validation")
     args = parser.parse_args()
     return args
 
@@ -88,7 +97,6 @@ class Custom_VITONHDTrainDataset(TrainDataset):
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
-        #self.args.data_root_path = os.path.join(self.args.data_root_path, "train")
         output_dir = os.path.join(
             self.args.output_dir, 
             "vitonhd", 
@@ -104,12 +112,92 @@ class Custom_VITONHDTrainDataset(TrainDataset):
             data.append({
                 'person_name': person_img,
                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
-                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img' ,cloth_img),
-                'cloth': os.path.join(self.args.data_root_path, 'cloth', 'upper_img' ,cloth_img),
+                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
+                'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
                 'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
-                'mask': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
             })
         return data
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        person = Image.open(data['person'])
+
+        # 상의(cloth)와 하의(cloth_l) 중 랜덤 선택
+        if random.random() < 0.5:
+            cloth = Image.open(data['cloth_u'])  # 상의
+            mask = Image.open(data['mask_u'])    # 상의 마스크
+        else:
+            cloth = Image.open(data['cloth_l'])  # 하의
+            mask = Image.open(data['mask_l'])    # 하의 마스크
+
+        # Horizontal flip 적용
+        if random.random() < 0.5:
+            person = person.transpose(Image.FLIP_LEFT_RIGHT)
+            cloth = cloth.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+
+        return {
+            'index': idx,
+            'person_name': data['person_name'],
+            'person': self.vae_processor.preprocess(person, self.args.height, self.args.width)[0],
+            'cloth': self.vae_processor.preprocess(cloth, self.args.height, self.args.width)[0],
+            'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
+        }
+
+class Custom_VITONHDTestDataset(TrainDataset):
+    def load_data(self):
+        pair_txt = os.path.join(self.args.data_root_path, 'test_unpair.txt')
+        assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
+        with open(pair_txt, 'r') as f:
+            lines = f.readlines()
+        output_dir = os.path.join(
+            self.args.output_dir, 
+            "vitonhd", 
+            'unpaired' if not self.args.eval_pair else 'paired'
+        )
+        data = []
+        for line in lines:
+            person_img, cloth_img = line.strip().split(" ")
+            if os.path.exists(os.path.join(output_dir, person_img)):
+                continue
+            if self.args.eval_pair:
+                cloth_img = person_img
+            data.append({
+                'person_name': person_img,
+                'person': os.path.join(self.args.data_root_path, 'image', person_img),
+                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
+                'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
+                'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
+                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+            })
+        return data
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        person = Image.open(data['person'])
+
+        # 상의(cloth)와 하의(cloth_l) 중 랜덤 선택
+        if random.random() < 0.5:
+            cloth = Image.open(data['cloth_u'])  # 상의
+            mask = Image.open(data['mask_u'])    # 상의 마스크
+        else:
+            cloth = Image.open(data['cloth_l'])  # 하의
+            mask = Image.open(data['mask_l'])    # 하의 마스크
+
+        # Horizontal flip 적용
+        if random.random() < 0.5:
+            person = person.transpose(Image.FLIP_LEFT_RIGHT)
+            cloth = cloth.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+
+        return {
+            'index': idx,
+            'person_name': data['person_name'],
+            'person': self.vae_processor.preprocess(person, self.args.height, self.args.width)[0],
+            'cloth': self.vae_processor.preprocess(cloth, self.args.height, self.args.width)[0],
+            'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
+        }
 
 # class VITONHDTestDataset(TrainDataset):
 #     def load_data(self):
@@ -138,33 +226,74 @@ class Custom_VITONHDTrainDataset(TrainDataset):
 #             })
 #         return data
 
-class VITONHDTrainDataset(TrainDataset):
-    def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_pairs.txt')
-        assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
-        with open(pair_txt, 'r') as f:
-            lines = f.readlines()
-        self.args.data_root_path = os.path.join(self.args.data_root_path, "train")
-        output_dir = os.path.join(
-            self.args.output_dir, 
-            "vitonhd", 
-            'unpaired' if not self.args.eval_pair else 'paired'
-        )
-        data = []
-        for line in lines:
-            person_img, cloth_img = line.strip().split(" ")
-            if os.path.exists(os.path.join(output_dir, person_img)):
-                continue
-            if self.args.eval_pair:
-                cloth_img = person_img
-            data.append({
-                'person_name': person_img,
-                'person': os.path.join(self.args.data_root_path, 'image', person_img),
-                'cloth': os.path.join(self.args.data_root_path, 'cloth', cloth_img),
-                'mask': os.path.join(self.args.data_root_path, 'agnostic-v3.2', person_img),
-            })
-        return data
+# class VITONHDTrainDataset(TrainDataset):
+#     def load_data(self):
+#         pair_txt = os.path.join(self.args.data_root_path, 'train_pairs.txt')
+#         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
+#         with open(pair_txt, 'r') as f:
+#             lines = f.readlines()
+#         self.args.data_root_path = os.path.join(self.args.data_root_path, "train")
+#         output_dir = os.path.join(
+#             self.args.output_dir, 
+#             "vitonhd", 
+#             'unpaired' if not self.args.eval_pair else 'paired'
+#         )
+#         data = []
+#         for line in lines:
+#             person_img, cloth_img = line.strip().split(" ")
+#             if os.path.exists(os.path.join(output_dir, person_img)):
+#                 continue
+#             if self.args.eval_pair:
+#                 cloth_img = person_img
+#             data.append({
+#                 'person_name': person_img,
+#                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
+#                 'cloth': os.path.join(self.args.data_root_path, 'cloth', cloth_img),
+#                 'mask': os.path.join(self.args.data_root_path, 'agnostic-v3.2', person_img),
+#             })
+#         return data
 
+def to_pil_image(images):
+    images = (images / 2 + 0.5).clamp(0, 1)
+    images = images.cpu().permute(0, 2, 3, 1).float().numpy()
+    if images.ndim == 3:
+        images = images[None, ...]
+    images = (images * 255).round().astype("uint8")
+    if images.shape[-1] == 1:
+        # special case for grayscale (single channel) images
+        pil_images = [Image.fromarray(image.squeeze(), mode="L") for image in images]
+    else:
+        pil_images = [Image.fromarray(image) for image in images]
+    return pil_images
+
+def img2tensor(imgs, bgr2rgb=True, float32=True):
+    """Numpy array to tensor.
+
+    Args:
+        imgs (list[ndarray] | ndarray): Input images.
+        bgr2rgb (bool): Whether to change bgr to rgb.
+        float32 (bool): Whether to change to float32.
+
+    Returns:
+        list[tensor] | tensor: Tensor images. If returned results only have
+            one element, just return tensor.
+    """
+
+    def _totensor(img, bgr2rgb, float32):
+        if img.shape[2] == 3 and bgr2rgb:
+            if img.dtype == 'float64':
+                img = img.astype('float32')
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # normalize to [0, 1]
+        if float32:
+            img = img.astype(np.float32) #/ 255.
+        img = torch.from_numpy(img.transpose(2, 0, 1))        
+        return img
+
+    if isinstance(imgs, list):
+        return [_totensor(img, bgr2rgb, float32) for img in imgs]
+    else:
+        return _totensor(imgs, bgr2rgb, float32)
 
 def main():
     args = parse_args()
@@ -183,12 +312,13 @@ def main():
     base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
     attn_ckpt = "zhengchong/CatVTON"
     attn_ckpt_version = "mix"
+    lpips_model_name = 'vgg'
 
     pipeline = CatVTONPipeline_Train(
         base_ckpt, 
         attn_ckpt,
         attn_ckpt_version,
-        device="cuda",
+        device=device,
         skip_safety_check=True,
     )
     pipeline.vae.eval()
@@ -227,62 +357,161 @@ def main():
     dataset = Custom_VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     
+    val_dataset = Custom_VITONHDTestDataset(args)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+
     # Accelerator로 모델, 옵티마이저, 데이터로더 준비
-    model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+    model, optimizer, dataloader, val_dataloader = accelerator.prepare(model, optimizer, dataloader, val_dataloader)
 
     generator = torch.Generator(device='cuda').manual_seed(args.seed)
     best_loss = float("inf")
+    best_PSNR = float("-inf")  # 클수록 좋음
+    best_SSIM = float("-inf")  # 클수록 좋음
+    best_LPIPS = float("inf")  # 작을수록 좋음
+
     best_epoch = -1
     global_step = 0
     model.train()
+    
+    # lpips
+    if lpips_model_name == 'vgg':
+        lpips_vgg = lpips.LPIPS(net='vgg').to(device)
+    if lpips_model_name == 'alex':
+        lpips_alex = lpips.LPIPS(net='alex').to(device)
 
     device = accelerator.device
     for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
         total_loss = 0.0
-        for batch in dataloader:
-            optimizer.zero_grad()
-            person = batch["person"]
-            cloth  = batch["cloth"]
-            mask   = batch["mask"]
+        optimizer.zero_grad() # 옵티마이저 초기화
+        for step, batch in enumerate(dataloader):
+            with accelerator.accumulate(model):  # Gradient accumulation 시작
+                person = batch["person"]
+                cloth = batch["cloth"]
+                mask = batch["mask"]
 
-            with accelerator.autocast():
-                image_latent = pipeline(
-                    person,
-                    cloth,
-                    mask,
-                    guidance_scale=args.guidance_scale,
-                    height=args.height,
-                    width=args.width,
-                    generator=generator,
-                )
-                with torch.no_grad():
-                    person_latent = compute_vae_encodings(person, pipeline.vae)
+                with accelerator.autocast():
+                    image_latent = pipeline(
+                        person,
+                        cloth,
+                        mask,
+                        guidance_scale=args.guidance_scale,
+                        height=args.height,
+                        width=args.width,
+                        generator=generator,
+                        is_train=True,  # 학습 모드
+                    )
+                    with torch.no_grad():
+                        person_latent = compute_vae_encodings(person, pipeline.vae)
+                    
+                    # masked loss 사용 가능하게 추가
+                    if args.use_maked_loss:
+                        # mask를 latent 크기에 맞게 보간
+                        mask_latent = torch.nn.functional.interpolate(
+                            mask, size=person_latent.shape[-2:], mode="nearest"
+                        )
+                        # masked된 부분만 손실 계산
+                        masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
+                        masked_image_latent = image_latent * (mask_latent < 0.5)
+                        loss = loss_fn(masked_person_latent, masked_image_latent)
+                    else:
+                        # 기본 전체 손실
+                        loss = loss_fn(person_latent, image_latent)
+                
+                # 그라디언트 계산
+                accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
+                
+                # accumulation_steps마다 업데이트
+                if (step + 1) % args.accumulation_steps == 0 or (step + 1) == len(dataloader):
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-                # MSE Loss 계산: person_latent와 pipeline에서 얻은 denoised latent 간의 차이 최소화
-                loss = loss_fn(person_latent, image_latent)
-            accelerator.backward(loss)
-            optimizer.step()
-
-            total_loss += loss.item()
-            global_step += 1
-            wandb.log({"train_loss": loss.item(), "global_step": global_step})
+                total_loss += loss.item()
+                global_step += 1
+                wandb.log({"train_loss": loss.item(), "global_step": global_step})
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
-        """
-            형이 수정할 부분 모델 저장 코드
-        """
+        
         os.makedirs(args.output_dir, exist_ok=True)
-        checkpoint_path = os.path.join(args.output_dir, f"best_model_{epoch + 1}.pt")
-        torch.save(model.state_dict(), checkpoint_path)
-        print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {epoch + 1})")
+        
+        # 5 에폭마다 모델 각각 저장
+        if (epoch+1) % 5 == 0:
+            # validation
+            model.eval()
+            val_psnr, val_ssim, val_lpips = [], [], []
+            with torch.no_grad():
+                generator = torch.Generator(device='cuda').manual_seed(args.seed)
+                with accelerator.autocast():
+                    for batch in tqdm(val_dataloader, desc="Validation", total=len(val_dataloader)):
+                        person = batch["person"]
+                        cloth  = batch["cloth"]
+                        mask   = batch["mask"]
+                        results = pipeline(
+                            person,
+                            cloth,
+                            mask,
+                            num_inference_steps=args.num_inference_steps,
+                            guidance_scale=args.guidance_scale,
+                            height=args.height,
+                            width=args.width,
+                            generator=generator,
+                            is_train=False,  # 추론 모드
+                        )
+
+                        gt_person = to_pil_image(person)
+                        for i, (gt_img, pred_img) in enumerate(zip(gt_person, results)):
+
+                            gt_np = np.array(gt_img)
+                            pred_np = np.array(pred_img)
+                            # psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
+                            # ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
+                            # val_psnr.append(psnr_val)
+                            # val_ssim.append(ssim_val)
+
+                            gt_tensor, pred_tensor = img2tensor([gt_np, pred_np], bgr2rgb=True, float32=True)
+                            normalize(gt_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
+                            normalize(pred_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
+                            lpips_val = lpips_vgg(gt_tensor.unsqueeze(0).to(device), pred_tensor.unsqueeze(0).to(device)).cpu().item()
+                            val_lpips.append(lpips_val)
+
+                            output_dir = os.path.join(args.output_dir, f"val_epoch_{epoch+1}")
+                            os.makedirs(output_dir, exist_ok=True)
+                            pred_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_pred.jpg"))
+
+                
+            avg_psnr = np.mean(val_psnr)
+            avg_ssim = np.mean(val_ssim)
+            avg_lpips = np.mean(val_lpips)
+            print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
+            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips, "epoch": epoch+1})
+
+            # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
+            if avg_lpips < best_LPIPS:
+                best_LPIPS = avg_lpips
+                best_epoch = epoch + 1
+
+                checkpoint_dir = os.path.join(args.output_dir, "best_checkpoint")
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                lora_state_dict = get_peft_model_state_dict(model)
+                torch.save(lora_state_dict, os.path.join(checkpoint_dir, f"best_lpips_lora_model_{best_epoch}.pt"))
+                print(f"lpips best lora 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
+                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
+                wandb.run.summary["best_lpips"] = best_LPIPS
+                wandb.run.summary["best_epoch"] = best_epoch
+
+            model.train()
+
+
+        # loss가 감소하면 모델 저장, 덮어쓰기 방식
         if avg_loss < best_loss:
             best_loss = avg_loss
             best_epoch = epoch + 1
 
-            os.makedirs(args.output_dir, exist_ok=True)
-            checkpoint_path = os.path.join(args.output_dir, f"best_model_{best_epoch}.pt")
-            torch.save(model.state_dict(), checkpoint_path)
-            print(f"새로운 베스트 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+            checkpoint_path = os.path.join(args.output_dir, f"best_loss_lora_model_{best_epoch}.pt")
+            os.makedirs(checkpoint_path, exist_ok=True)
+            lora_state_dict = get_peft_model_state_dict(model)
+            torch.save(lora_state_dict, checkpoint_path)
+            print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+            wandb.log({"best_loss": best_loss, "best_epoch": best_epoch})
             # wandb에 베스트 모델 업데이트 기록
             wandb.run.summary["best_loss"] = best_loss
             wandb.run.summary["best_epoch"] = best_epoch

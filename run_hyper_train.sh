@@ -1,6 +1,6 @@
 #!/bin/bash
 # train_lora.sh
-
+# python train_lora.py  --data_root_path ./dataset --output_dir ./experiments/ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4 --accumulation_steps 4
 # 에폭 수 직접 설정
 num_epochs=20
 
