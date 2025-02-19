@@ -8,3 +8,5 @@ tqdm
 torchvision
 accelerate 
 git+https://github.com/huggingface/diffusers.git
+opencv-python
+lpips
