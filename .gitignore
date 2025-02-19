@@ -16,7 +16,7 @@ ckpt/.gitkeep
 data.zip
 # C extensions
 *.so
-
+experiments/
 # Distribution / packaging
 .Python
 build/
