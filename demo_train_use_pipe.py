@@ -91,7 +91,35 @@ class TrainDataset(Dataset):
             'cloth': self.vae_processor.preprocess(cloth, self.args.height, self.args.width)[0],
             'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
         }
-
+    
+class Custom_VITONHDTrainDataset(TrainDataset):
+    def load_data(self):
+        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair.txt')
+        assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
+        with open(pair_txt, 'r') as f:
+            lines = f.readlines()
+        #self.args.data_root_path = os.path.join(self.args.data_root_path, "train")
+        output_dir = os.path.join(
+            self.args.output_dir, 
+            "vitonhd", 
+            'unpaired' if not self.args.eval_pair else 'paired'
+        )
+        data = []
+        for line in lines:
+            person_img, cloth_img = line.strip().split(" ")
+            if os.path.exists(os.path.join(output_dir, person_img)):
+                continue
+            if self.args.eval_pair:
+                cloth_img = person_img
+            data.append({
+                'person_name': person_img,
+                'person': os.path.join(self.args.data_root_path, 'image', person_img),
+                'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img' ,cloth_img),
+                'cloth': os.path.join(self.args.data_root_path, 'cloth', 'upper_img' ,cloth_img),
+                'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
+                'mask': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+            })
+        return data
 
 # class VITONHDTestDataset(TrainDataset):
 #     def load_data(self):
@@ -210,7 +238,8 @@ def main():
     loss_fn = nn.MSELoss()
     loss_fn = loss_fn.to(precision)
 
-    dataset = VITONHDTrainDataset(args)
+    # dataset = VITONHDTrainDataset(args)
+    dataset = Custom_VITONHDTrainDataset(args)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     
     # Accelerator로 모델, 옵티마이저, 데이터로더 준비

@@ -212,14 +212,14 @@ class CatVTONPipeline_Train:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
         # 10. 한 번의 denoising step: scheduler.step을 사용하여 노이즈 제거된 latent 추출
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-        denoised_latent = self.noise_scheduler.step(noise_pred, t_batch, noisy_latent, **extra_step_kwargs).prev_sample
+        # extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+        # denoised_latent = self.noise_scheduler.step(noise_pred, t_batch, noisy_latent, **extra_step_kwargs).prev_sample
         # 11. 최종 출력 shape 복원: 높이 차원(-2)에서 원래 H로 복원 (B, C, 2H -> B, C, H)
-        denoised_latent = denoised_latent.split(denoised_latent.shape[concat_dim] // 2, dim=concat_dim)[0]
-        denoised_latent = 1 / self.vae.config.scaling_factor * denoised_latent
+        noise_pred = noise_pred.split(noise_pred.shape[concat_dim] // 2, dim=concat_dim)[0]
+        noise_pred = 1 / self.vae.config.scaling_factor * noise_pred
         # 12. float16 으로 변환 후 리턴
-        denoised_latent = denoised_latent.to(dtype=self.weight_dtype)
-        return denoised_latent
+        noise_pred = noise_pred.to(dtype=self.weight_dtype)
+        return noise_pred
 
 # 기존 추론용 파이프라인 건들지 마시오
 class CatVTONPipeline:
