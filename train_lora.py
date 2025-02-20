@@ -30,13 +30,12 @@ import resource
 if not hasattr(resource, "getpagesize"):
     resource.getpagesize = lambda: 4096
 import wandb
-sys.path.append(os.path.abspath(os.path.join(os.getcwd(),"CatVTON")))
 """
 사용할 파이프라인 고르기
 """
-
-from model.pipeline_train import CatVTONPipeline_Train
-from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+from CatVTON.model.pipeline_train import CatVTONPipeline_Train
+from CatVTON.utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from accelerate import Accelerator
 
 def parse_args():
@@ -56,7 +55,7 @@ def parse_args():
     parser.add_argument("--guidance_scale", type=float, default=2.5, help="Guidance scale for the diffusion model.")
     parser.add_argument("--use_fp16", default=False, help="Use FP16 precision for training.")
     parser.add_argument("--accumulation_steps", type=int, default=4, help="Number of steps to accumulate gradients before update.")
-    parser.add_argument("--use_maked_loss", action="store_true", default=True, help="Use masked loss for training.")
+    parser.add_argument("--use_maked_loss", action="store_true", default=False, help="Use masked loss for training.")
     parser.add_argument("--num_inference_steps", type=int, default=50, help="Number of inference steps for validation")
     args = parser.parse_args()
     return args
@@ -199,32 +198,32 @@ class Custom_VITONHDTestDataset(TrainDataset):
             'mask': self.mask_processor.preprocess(mask, self.args.height, self.args.width)[0]
         }
 
-# class VITONHDTestDataset(TrainDataset):
-#     def load_data(self):
-#         pair_txt = os.path.join(self.args.data_root_path, 'test_pairs_unpaired.txt')
-#         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
-#         with open(pair_txt, 'r') as f:
-#             lines = f.readlines()
-#         self.args.data_root_path = os.path.join(self.args.data_root_path, "test")
-#         output_dir = os.path.join(
-#             self.args.output_dir, 
-#             "vitonhd", 
-#             'unpaired' if not self.args.eval_pair else 'paired'
-#         )
-#         data = []
-#         for line in lines:
-#             person_img, cloth_img = line.strip().split(" ")
-#             if os.path.exists(os.path.join(output_dir, person_img)):
-#                 continue
-#             if self.args.eval_pair:
-#                 cloth_img = person_img
-#             data.append({
-#                 'person_name': person_img,
-#                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
-#                 'cloth': os.path.join(self.args.data_root_path, 'cloth', cloth_img),
-#                 'mask': os.path.join(self.args.data_root_path, 'agnostic-mask', person_img.replace('.jpg', '_mask.png')),
-#             })
-#         return data
+class VITONHDTestDataset(TrainDataset):
+    def load_data(self):
+        pair_txt = os.path.join(self.args.data_root_path, 'test_pairs_unpaired.txt')
+        assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
+        with open(pair_txt, 'r') as f:
+            lines = f.readlines()
+        self.args.data_root_path = os.path.join(self.args.data_root_path, "test")
+        output_dir = os.path.join(
+            self.args.output_dir, 
+            "vitonhd", 
+            'unpaired' if not self.args.eval_pair else 'paired'
+        )
+        data = []
+        for line in lines:
+            person_img, cloth_img = line.strip().split(" ")
+            if os.path.exists(os.path.join(output_dir, person_img)):
+                continue
+            if self.args.eval_pair:
+                cloth_img = person_img
+            data.append({
+                'person_name': person_img,
+                'person': os.path.join(self.args.data_root_path, 'image', person_img),
+                'cloth': os.path.join(self.args.data_root_path, 'cloth', cloth_img),
+                'mask': os.path.join(self.args.data_root_path, 'agnostic-mask', person_img.replace('.jpg', '_mask.png')),
+            })
+        return data
 
 # class VITONHDTrainDataset(TrainDataset):
 #     def load_data(self):
@@ -390,7 +389,7 @@ def main():
                 mask = batch["mask"]
 
                 with accelerator.autocast():
-                    image_latent = pipeline(
+                    noise, noise_pred = pipeline(
                         person,
                         cloth,
                         mask,
@@ -410,12 +409,12 @@ def main():
                             mask, size=person_latent.shape[-2:], mode="nearest"
                         )
                         # masked된 부분만 손실 계산
-                        masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
-                        masked_image_latent = image_latent * (mask_latent < 0.5)
-                        loss = loss_fn(masked_person_latent, masked_image_latent)
+                        # masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
+                        # masked_image_latent = image_latent * (mask_latent < 0.5)
+                        # loss = loss_fn(masked_person_latent, masked_image_latent)
                     else:
                         # 기본 전체 손실
-                        loss = loss_fn(person_latent, image_latent)
+                        loss = loss_fn(noise, noise_pred)
                 
                 # 그라디언트 계산
                 accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
@@ -434,7 +433,7 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
         
         # 5 에폭마다 모델 각각 저장
-        if (epoch+1) % 5 == 0:
+        if (epoch+1) % 1 == 0:
             # validation
             model.eval()
             val_psnr, val_ssim, val_lpips = [], [], []
@@ -475,6 +474,7 @@ def main():
 
                             output_dir = os.path.join(args.output_dir, f"val_epoch_{epoch+1}")
                             os.makedirs(output_dir, exist_ok=True)
+                            gt_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_gt.jpg"))
                             pred_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_pred.jpg"))
 
                 
@@ -482,7 +482,7 @@ def main():
             avg_ssim = np.mean(val_ssim)
             avg_lpips = np.mean(val_lpips)
             print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
-            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips}, step=epoch+1)
+            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips})
             # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
             if avg_lpips < best_LPIPS:
                 best_LPIPS = avg_lpips
@@ -493,7 +493,7 @@ def main():
                 lora_state_dict = get_peft_model_state_dict(model)
                 torch.save(lora_state_dict, os.path.join(checkpoint_dir, f"best_lpips_lora_model_{best_epoch}.pt"))
                 print(f"lpips best lora 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
-                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch}, step=epoch+1)
+                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
                 wandb.run.summary["best_lpips"] = best_LPIPS
                 wandb.run.summary["best_epoch"] = best_epoch
 

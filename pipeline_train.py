@@ -14,9 +14,9 @@ from diffusers.utils.torch_utils import randn_tensor
 from huggingface_hub import snapshot_download
 from transformers import CLIPImageProcessor
 
-from model.attn_processor import SkipAttnProcessor
-from model.utils import get_trainable_module, init_adapter
-from utils import (compute_vae_encodings, numpy_to_pil, prepare_image,
+from CatVTON.model.attn_processor import SkipAttnProcessor
+from CatVTON.model.utils import get_trainable_module, init_adapter
+from CatVTON.utils import (compute_vae_encodings, numpy_to_pil, prepare_image,
                    prepare_mask_image, resize_and_crop, resize_and_padding)
 
 
@@ -122,24 +122,81 @@ class CatVTONPipeline_Train:
         eta=1.0,
         **kwargs
     ):
+        import matplotlib.pyplot as plt
+        # Helper function to visualize latent tensors (e.g., by averaging channels)
+        # 출력 디렉토리가 없으면 생성
+        os.makedirs("vis", exist_ok=True)
+
+        # 잠재 변수 저장 헬퍼 함수 (채널 평균을 계산해 저장)
+        def save_latent(latent, filename, cmap='gray'):
+            latent_mean = latent.mean(dim=1).cpu().float().numpy()  # 채널 평균
+            plt.figure(figsize=(5, 5))
+            plt.imshow(latent_mean[0], cmap=cmap)
+            plt.title(filename.split('.')[0])
+            plt.axis('off')
+            plt.savefig(os.path.join("vis", filename))
+            plt.close()
+
+        # 이미지 저장 헬퍼 함수 ([B, C, H, W] 형식의 텐서 예상)
+        def save_image(input_data, filename):
+    # Handle PyTorch tensor input
+            if isinstance(input_data, torch.Tensor):
+                img = input_data[0].cpu().permute(1, 2, 0).float().numpy()
+            # Handle NumPy array input
+            elif isinstance(input_data, np.ndarray):
+                if input_data.ndim == 4:  # [B, H, W, C]
+                    img = input_data[0]
+                elif input_data.ndim == 3:  # [H, W, C]
+                    img = input_data
+                else:
+                    raise ValueError(f"Unsupported NumPy array shape: {input_data.shape}")
+                # Ensure channel dimension is last (e.g., convert [C, H, W] to [H, W, C])
+                if img.shape[0] in [1, 3, 4]:  # Assuming channels-first
+                    img = img.transpose(1, 2, 0)
+            else:
+                raise TypeError("Input must be a PyTorch tensor or NumPy array")
+            
+            # Normalize to [0, 1]
+            img = (img - img.min()) / (img.max() - img.min())
+            
+            # Plot and save
+            plt.figure(figsize=(5, 5))
+            plt.imshow(img)
+            plt.title(filename.split('.')[0])
+            plt.axis('off')
+            plt.savefig(os.path.join("vis", filename))
+            plt.close()
+
         concat_dim = -2  # FIXME: y axis concat (원래 코드와 동일)
         # 1. 입력 전처리: PIL 또는 Tensor를 받아 지정된 크기로 변환
+        save_image(mask, "before_check_mask.png")
         image, condition_image, mask = self.check_inputs(image, condition_image, mask, width, height)
         image = prepare_image(image).to(self.device, dtype=self.weight_dtype)
         condition_image = prepare_image(condition_image).to(self.device, dtype=self.weight_dtype)
+        save_image(mask, "before_prepare_mask.png")
         mask = prepare_mask_image(mask).to(self.device, dtype=self.weight_dtype)
-        
+        #-----------------
+        # 저장: 원본 이미지, 조건 이미지, 마스크
+        save_image(image, "original_image.png")
+        save_image(condition_image, "condition_image.png")
+        save_image(mask, "after_prepare_mask.png")
+        #-----------------
         # 2. 마스크 적용 (예: inpainting에서 복원할 영역 지정)
         masked_image = image * (mask < 0.5)
-        
+        save_image(masked_image, "masked_image")
         # 3. VAE 인코딩 (보통 VAE는 고정하므로 no_grad 사용)
         with torch.no_grad():
             masked_latent = compute_vae_encodings(masked_image, self.vae)
             condition_latent = compute_vae_encodings(condition_image, self.vae)
         # print("masked_latent : ",masked_latent.shape)
         # print("condition_latent : ", condition_latent.shape)
+        # 저장: VAE 인코딩 후 잠재 변수
+        save_latent(masked_latent, "masked_latent.png")
+        save_latent(condition_latent, "condition_latent.png")
+
         # 4. mask latent 생성: masked_latent와 동일한 spatial 해상도로 보간
         mask_latent = torch.nn.functional.interpolate(mask, size=masked_latent.shape[-2:], mode="nearest")
+        save_latent(mask_latent, "mask_latent.png")
         # print("mask_latent : ", mask_latent.shape)
         del image, mask, condition_image  # 메모리 해제
         
@@ -148,16 +205,17 @@ class CatVTONPipeline_Train:
         mask_latent_concat = torch.cat([mask_latent, torch.zeros_like(mask_latent)], dim=concat_dim)
         # print("masked_latent_concat : ", masked_latent_concat.shape)
         # print("mask_latent_concat : ", mask_latent_concat.shape)
-
+        save_latent(masked_latent_concat, "masked_latent_concat.png")
+        save_latent(mask_latent_concat, "mask_latent_concat.png")
         if is_train:
             # 학습 모드: 단일 timestep 노이즈 예측
             batch_size = masked_latent_concat.shape[0]
             num_timesteps = self.noise_scheduler.config.num_train_timesteps
             self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
-            t_val = int(torch.randint(0, num_timesteps, (1,), device=self.device))
-            t_batch = torch.full((batch_size,), t_val, device=self.device)
+            t = torch.randint(0, num_timesteps, (batch_size,), device=self.device)
+
             noise = randn_tensor(masked_latent_concat.shape, generator=generator, device=self.device, dtype=self.weight_dtype)
-            noisy_latent = self.noise_scheduler.add_noise(masked_latent_concat, noise, t_batch)
+            noisy_latent = self.noise_scheduler.add_noise(masked_latent_concat, noise, t)
             
             do_classifier_free_guidance = guidance_scale > 1.0
             if do_classifier_free_guidance:
@@ -166,15 +224,17 @@ class CatVTONPipeline_Train:
                     masked_latent_concat,
                 ])
                 mask_latent_concat = torch.cat([mask_latent_concat] * 2)
-                t = torch.cat([t_batch, t_batch], dim=0)
+                t = torch.cat([t]* 2, dim=0)
             
             non_inpainting_latent_model_input = (
                 torch.cat([noisy_latent] * 2, dim=0) if do_classifier_free_guidance else noisy_latent
             )
-            non_inpainting_latent_model_input = self.noise_scheduler.scale_model_input(non_inpainting_latent_model_input, t_batch)
+            non_inpainting_latent_model_input = self.noise_scheduler.scale_model_input(non_inpainting_latent_model_input, t)
             inpainting_latent_model_input = torch.cat(
                 [non_inpainting_latent_model_input, mask_latent_concat, masked_latent_concat], dim=1
             )
+            save_latent(noise, "added_noise.png")
+            save_latent(noisy_latent, "noisy_latent.png")
             noise_pred = self.unet(
                 inpainting_latent_model_input,
                 t.to(self.device),
@@ -185,8 +245,11 @@ class CatVTONPipeline_Train:
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
             noise_pred = noise_pred.split(noise_pred.shape[concat_dim] // 2, dim=concat_dim)[0]
+            noise = noise.split(noise.shape[concat_dim] // 2, dim=concat_dim)[0]
+            # scaling_factor 적용
+            noise = 1 / self.vae.config.scaling_factor * noise
             noise_pred = 1 / self.vae.config.scaling_factor * noise_pred
-            return noise_pred.to(dtype=self.weight_dtype)
+            return noise, noise_pred.to(dtype=self.weight_dtype)
         
         else:
             # 추론 모드: 풀 denoising 루프
@@ -196,6 +259,8 @@ class CatVTONPipeline_Train:
                 device=self.device,
                 dtype=self.weight_dtype,
             )
+            save_latent(latents, "initial_random_latent.png")
+
             self.noise_scheduler.set_timesteps(num_inference_steps, device=self.device)
             timesteps = self.noise_scheduler.timesteps
             latents = latents * self.noise_scheduler.init_noise_sigma
@@ -209,6 +274,8 @@ class CatVTONPipeline_Train:
                 mask_latent_concat = torch.cat([mask_latent_concat] * 2)
 
             extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
+
+            i = 0
             for t in timesteps:
                 non_inpainting_latent_model_input = (
                     torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -227,6 +294,20 @@ class CatVTONPipeline_Train:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
                 latents = self.noise_scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+                # 10단계마다 중간 결과 저장
+                if i % 10 == 0 or i == len(timesteps) - 1:
+                    with torch.no_grad():
+                        latent_to_decode = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
+                        latent_to_decode = 1 / self.vae.config.scaling_factor * latent_to_decode
+                        decoded_image = self.vae.decode(latent_to_decode.to(self.weight_dtype)).sample
+                        decoded_image = (decoded_image / 2 + 0.5).clamp(0, 1)
+                        plt.figure(figsize=(5, 5))
+                        plt.imshow(decoded_image[0].cpu().permute(1, 2, 0).float().numpy())
+                        plt.title(f"Step {i}")
+                        plt.axis('off')
+                        plt.savefig(os.path.join("vis", f"step_{i}.png"))
+                        plt.close()
+                i += 1
 
             latents = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
             latents = 1 / self.vae.config.scaling_factor * latents
@@ -234,6 +315,8 @@ class CatVTONPipeline_Train:
                 image = self.vae.decode(latents.to(self.weight_dtype)).sample
             image = (image / 2 + 0.5).clamp(0, 1)
             image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+
+            save_image(image, "final_decoded_image.png")
             return numpy_to_pil(image)
 
 # 기존 추론용 파이프라인 건들지 마시오
