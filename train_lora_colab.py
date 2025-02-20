@@ -33,12 +33,12 @@ import wandb
 """
 사용할 파이프라인 고르기
 """
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-# sys.path.append(os.path.abspath(os.path.join(os.path.getcwd(), "CatVTON")))
-# from model.pipeline_train import CatVTONPipeline_Train
-# from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
-from CatVTON.model.pipeline_train import CatVTONPipeline_Train
-from CatVTON.utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
+# sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.getcwd(), "CatVTON")))
+from model.pipeline_train import CatVTONPipeline_Train
+from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
+# from CatVTON.model.pipeline_train import CatVTONPipeline_Train
+# from CatVTON.utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from accelerate import Accelerator
 
 def parse_args():
