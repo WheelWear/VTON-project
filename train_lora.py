@@ -113,8 +113,8 @@ class Custom_VITONHDTrainDataset(TrainDataset):
                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
                 'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
                 'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
-                'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
-                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+                'mask_l': os.path.join(self.args.data_root_path, 'image_mask_L', person_img),
+                'mask_u': os.path.join(self.args.data_root_path, 'image_mask_U', person_img)
             })
         return data
 
@@ -167,8 +167,8 @@ class Custom_VITONHDTestDataset(TrainDataset):
                 'person': os.path.join(self.args.data_root_path, 'image', person_img),
                 'cloth_l': os.path.join(self.args.data_root_path, 'cloth', 'lower_img', cloth_img),
                 'cloth_u': os.path.join(self.args.data_root_path, 'cloth', 'upper_img', cloth_img),
-                'mask_l': os.path.join(self.args.data_root_path, 'image_with_lower_agnostic', person_img),
-                'mask_u': os.path.join(self.args.data_root_path, 'image_with_upper_agnostic', person_img)
+                'mask_l': os.path.join(self.args.data_root_path, 'image_mask_L', person_img),
+                'mask_u': os.path.join(self.args.data_root_path, 'image_mask_U', person_img)
             })
         return data
 
