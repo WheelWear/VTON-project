@@ -41,6 +41,11 @@ from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 # from CatVTON.utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from accelerate import Accelerator
 
+# 모델 배포 과정
+from huggingface_hub import HfApi
+from datetime import datetime
+api = HfApi()
+
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA Fine-tuning for Latent Diffusion based CatVTON")
     parser.add_argument("--data_root_path", type=str, required=True, help="Path to the training dataset.")
@@ -95,7 +100,7 @@ class TrainDataset(Dataset):
     
 class Custom_VITONHDTrainDataset(TrainDataset):
     def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair.txt')
+        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair_sample.txt')
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
@@ -485,34 +490,54 @@ def main():
             avg_ssim = np.mean(val_ssim)
             avg_lpips = np.mean(val_lpips)
             print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
-            wandb.log({"val_psnr": avg_psnr, "val_ssim": avg_ssim, "val_lpips": avg_lpips})
+            wandb.log({"val_lpips": avg_lpips})
             # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
             if avg_lpips < best_LPIPS:
                 best_LPIPS = avg_lpips
                 best_epoch = epoch + 1
-
-                checkpoint_dir = os.path.join(args.output_dir, "best_checkpoint")
-                os.makedirs(checkpoint_dir, exist_ok=True)
-                lora_state_dict = get_peft_model_state_dict(model)
-                torch.save(lora_state_dict, os.path.join(checkpoint_dir, f"best_lpips_lora_model_{best_epoch}.pt"))
-                print(f"lpips best lora 모델 저장: {checkpoint_dir} (Epoch {best_epoch}, LPIPS {best_LPIPS:.4f})")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+                checkpoint_path = os.path.join(args.output_dir, "best_checkpoint", checkpoint_filename)
+                os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+                torch.save(lora_state_dict, checkpoint_path)
+                api.upload_file(
+                    path_or_fileobj=checkpoint_path,
+                    path_in_repo=checkpoint_filename,
+                    repo_id="Coldbrew9/wheel-CatVTON",
+                    repo_type="model",
+                )
+                print(f"best lpips lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
                 wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
-                wandb.run.summary["best_lpips"] = best_LPIPS
-                wandb.run.summary["best_epoch"] = best_epoch
-
             model.train()
 
 
-        # loss가 감소하면 모델 저장, 덮어쓰기 방식
+        # loss가 감소하면 모델 저장
         if avg_loss < best_loss:
             best_loss = avg_loss
             best_epoch = epoch + 1
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            checkpoint_path = os.path.join(args.output_dir, f"best_loss_lora_model_{best_epoch}.pt")
+            checkpoint_filename = f"best_loss_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+            checkpoint_path = os.path.join(args.output_dir, checkpoint_filename)
             os.makedirs(args.output_dir, exist_ok=True)
+            
+            # 모델 저장
             lora_state_dict = get_peft_model_state_dict(model)
             torch.save(lora_state_dict, checkpoint_path)
             print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+
+            # Hugging Face에 업로드
+            try:
+                api.upload_file(
+                    path_or_fileobj=checkpoint_path,
+                    path_in_repo=checkpoint_filename,
+                    repo_id="Coldbrew9/wheel-CatVTON",
+                    repo_type="model",
+                )
+                print(f"모델 업로드 완료: {checkpoint_filename} -> Coldbrew9/wheel-CatVTON")
+            except Exception as e:
+                print(f"업로드 실패: {e}")
+            
             wandb.log({"best_loss": best_loss, "best_epoch": best_epoch})
             # wandb에 베스트 모델 업데이트 기록
             wandb.run.summary["best_loss"] = best_loss
