@@ -10,9 +10,7 @@ accelerate
 git+https://github.com/huggingface/diffusers.git
 opencv-python
 lpips
-fastapi
 uvicorn
-pillow
 google-cloud-storage
 google-auth
 fvcore

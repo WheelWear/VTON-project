@@ -34,7 +34,7 @@ import wandb
 사용할 파이프라인 고르기
 """
 # sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-sys.path.append(os.path.abspath(os.path.join(os.path.getcwd(), "CatVTON")))
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "CatVTON")))
 from model.pipeline_train import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 # from CatVTON.model.pipeline_train import CatVTONPipeline_Train
@@ -100,7 +100,7 @@ class TrainDataset(Dataset):
     
 class Custom_VITONHDTrainDataset(TrainDataset):
     def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair_sample.txt')
+        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair.txt')
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()

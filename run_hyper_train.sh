@@ -15,7 +15,7 @@ for lr in 1e-5; do
             echo "Running with lr=$lr, lora_rank=$lora_rank, accumulation_steps=$accum_steps, num_epochs=$num_epochs..."
 
             # Python 명령어 실행
-            python train_lora.py --data_root_path ./dataset --output_dir "$output_dir" --use_fp16 True --num_epochs "$num_epochs" --batch_size 1 --lr "$lr" --lora_rank "$lora_rank" --accumulation_steps "$accum_steps"
+            python train_lora_colab.py --data_root_path ./dataset --output_dir "$output_dir" --use_fp16 True --num_epochs "$num_epochs" --batch_size 1 --lr "$lr" --lora_rank "$lora_rank" --accumulation_steps "$accum_steps"
         done
     done
 done
