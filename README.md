@@ -1,5 +1,15 @@
 # VTON-project
 
+## Docker
+```
+#docker pull base image
+docker pull nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+#docker build
+docker build -t catvton-cuda12.8-python3.10:latest
+#docker run
+docker run --gpus all -itd -p 8000:8000 -v "$($PWD.Path):/app" --name aiserver catvton-cuda12.8-python3.10:latest
+```
+
 ## Run Train
 ```
 # local train

@@ -10,11 +10,26 @@ import torch
 import requests
 import re
 import time
+import logging
 from huggingface_hub import snapshot_download, hf_hub_download
 from diffusers.image_processor import VaeImageProcessor
 from peft import get_peft_model, LoraConfig
 from google.cloud import storage
 from google.oauth2 import service_account
+
+os.makedirs("logs", exist_ok=True)
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# logs 폴더 생성 (존재하지 않을 경우)
 
 # CatVTON 경로 설정
 catvton_path = os.path.abspath(os.path.join(os.getcwd(), "CatVTON"))
@@ -47,14 +62,14 @@ pipeline = CatVTONPipeline(
 lora_ckpt = "lora_weights"
 os.makedirs(lora_ckpt, exist_ok=True)
 repo_id = "Coldbrew9/wheel-CatVTON"
-lora_filename = "best_loss_lora_r16_ep22_20250221_060355.pt"
+lora_filename = "best_loss_lora_r64_ep22_20250221_081824.pt"
 lora_weights_path = hf_hub_download(
     repo_id=repo_id,
     filename=lora_filename,
     local_dir=lora_ckpt,
     repo_type="model"
 )
-print(f"Downloaded LoRA weights from {repo_id} to {lora_weights_path}")
+logger.info(f"Downloaded LoRA weights from {repo_id} to {lora_weights_path}")
 
 filename_base = os.path.basename(lora_filename)
 match = re.search(r"lora_r(\d+)", filename_base)
@@ -67,7 +82,7 @@ lora_config = LoraConfig(
 )
 pipeline.unet = get_peft_model(pipeline.unet, lora_config)
 pipeline.unet.load_state_dict(torch.load(lora_weights_path, map_location=device), strict=False)
-print(f"Loaded LoRA weights into pipeline from {lora_weights_path}")
+logger.info(f"Loaded LoRA weights into pipeline from {lora_weights_path}")
 
 mask_processor = VaeImageProcessor(vae_scale_factor=8, do_normalize=False, do_binarize=True, do_convert_grayscale=True)
 automasker = AutoMasker(
@@ -93,18 +108,26 @@ async def tryon(request: TryonRequest):
     timestamp = time.strftime("%Y%m%d%H%M%S", time.localtime())
     img_filename = f"vtonimage/generated_image{count}_{timestamp}.png"
 
+    logger.info(f"Processing tryon request for body_image_url: {request.body_image_url}, cloth_type: {request.cloth_type}")
+
     # 이미지 다운로드
     person_path = download_image(request.body_image_url, "tryon-images/person.jpg")
+    logger.info(f"Downloaded person image to {person_path}")
     cloth_path = None
     cloth_type = request.cloth_type
     if request.top_cloth_url and cloth_type == "upper":
         cloth_path = download_image(request.top_cloth_url, "tryon-images/top_cloth.jpg")
+        logger.info(f"Downloaded top cloth image to {cloth_path}")
     elif request.bottom_cloth_url and cloth_type == "lower":
         cloth_path = download_image(request.bottom_cloth_url, "tryon-images/bottom_cloth.jpg")
+        logger.info(f"Downloaded bottom cloth image to {cloth_path}")
     elif request.dress_image_url and cloth_type == "dress":
         cloth_path = download_image(request.dress_image_url, "tryon-images/dress.jpg")
+        logger.info(f"Downloaded dress image to {cloth_path}")
     else:
+        logger.error(f"cloth_type '{cloth_type}'에 맞는 cloth URL이 제공되지 않았습니다.")
         raise ValueError(f"cloth_type '{cloth_type}'에 맞는 cloth URL(top_cloth_url, bottom_cloth_url, dress_image_url)이 제공되지 않았습니다.")
+
     # 추론
     with torch.no_grad():
         person_image = Image.open(person_path).convert("RGB")
@@ -115,9 +138,12 @@ async def tryon(request: TryonRequest):
         cloth_image = resize_and_padding(cloth_image, (768, 1024))
         person_image.save("tryon-images/person_resized.jpg")
         cloth_image.save("tryon-images/cloth_resized.jpg")
+        logger.info("Resized and cropped images for inference")
+
         mask = automasker(person_image, mask_type=cloth_type)['mask']
         
         generator = torch.Generator(device=device).manual_seed(555)
+        logger.info("Starting inference with CatVTON pipeline")
         result = pipeline(
             image=person_image,
             condition_image=cloth_image,
@@ -132,6 +158,7 @@ async def tryon(request: TryonRequest):
     # GCS 업로드
     result_image = result
     result_image.save("tryon-images/result.png")
+    logger.info("Saved inference result to tryon-images/result.png")
     img_byte_arr = BytesIO()
     result_image.save(img_byte_arr, format="PNG")
     img_byte_arr.seek(0)
@@ -139,6 +166,7 @@ async def tryon(request: TryonRequest):
     blob = bucket.blob(img_filename)
     blob.upload_from_file(img_byte_arr, content_type="image/png")
     image_url = f"https://storage.googleapis.com/{BUCKET_NAME}/{img_filename}"
+    logger.info(f"Uploaded result image to GCS: {image_url}")
 
     return {"result_image_url": image_url}
 
@@ -148,19 +176,26 @@ async def tryon_upload(
     cloth_image: UploadFile = File(...),  # 필수
     cloth_type: str = Form(...)          # 필수
 ):
+    logger.info(f"Processing tryon-upload request for cloth_type: {cloth_type}")
+
     # 업로드된 이미지 처리
     person_image = Image.open(BytesIO(await body_image.read())).convert("RGB")
     cloth_image = Image.open(BytesIO(await cloth_image.read())).convert("RGB")
+    logger.info("Loaded and converted uploaded images")
+
     # 추론
     with torch.no_grad():
         person_image = ImageOps.exif_transpose(person_image)
         cloth_image = ImageOps.exif_transpose(cloth_image)
         person_image = resize_and_crop(person_image, (768, 1024))
         cloth_image = resize_and_padding(cloth_image, (768, 1024))
+        logger.info("Resized and cropped uploaded images for inference")
+
         # automasker는 PIL 이미지를 처리한다고 가정 (필요 시 경로로 변환)
         mask = automasker(person_image, mask_type=cloth_type)['mask']
 
         generator = torch.Generator(device=device).manual_seed(555)
+        logger.info("Starting inference with CatVTON pipeline for upload")
         result = pipeline(
             image=person_image,
             condition_image=cloth_image,
@@ -177,27 +212,24 @@ async def tryon_upload(
     img_byte_arr = BytesIO()
     result_image.save(img_byte_arr, format="PNG")
     img_byte_arr.seek(0)
+    logger.info("Prepared streaming response with inference result")
 
     return StreamingResponse(img_byte_arr, media_type="image/png")
 
 def download_image(url: str, save_path: str) -> str:
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    img = Image.open(BytesIO(response.content)).convert('RGB')
-    img.save(save_path)
-    return save_path
+    try:
+        logger.info(f"Downloading image from {url} to {save_path}")
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        img = Image.open(BytesIO(response.content)).convert('RGB')
+        img.save(save_path)
+        logger.info(f"Successfully downloaded and saved image to {save_path}")
+        return save_path
+    except Exception as e:
+        logger.error(f"Failed to download image from {url}: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     import uvicorn
-    from pyngrok import ngrok
-    
-    public_url = ngrok.connect(8000).public_url
-    print(f"Public URL: {public_url}")
-
+    logger.info("Starting FastAPI application with Uvicorn server")
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-    # cloth
-    # https://huggingface.co/Coldbrew9/wheel-SKFLY-P4/resolve/main/cloth/lower_img/00037.jpg
-    # person
-    # https://huggingface.co/Coldbrew9/wheel-SKFLY-P4/resolve/main/image/00174.jpg

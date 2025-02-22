@@ -12,7 +12,6 @@ import torchvision.transforms as transforms
 from peft import get_peft_model, LoraConfig, TaskType
 from peft import get_peft_model_state_dict
 
-from diffusers import DDPMScheduler
 from diffusers.image_processor import VaeImageProcessor
 
 import numpy as np
@@ -30,15 +29,10 @@ import resource
 if not hasattr(resource, "getpagesize"):
     resource.getpagesize = lambda: 4096
 import wandb
-"""
-사용할 파이프라인 고르기
-"""
-# sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "CatVTON")))
 from model.pipeline_train import CatVTONPipeline_Train
 from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
-# from CatVTON.model.pipeline_train import CatVTONPipeline_Train
-# from CatVTON.utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from accelerate import Accelerator
 
 # 모델 배포 과정
@@ -408,20 +402,6 @@ def main():
                         is_train=True,  # 학습 모드
                     )
                     with torch.no_grad():
-                        person_latent = compute_vae_encodings(person, pipeline.vae)
-                    
-                    # masked loss 사용 가능하게 추가
-                    if args.use_maked_loss:
-                        # mask를 latent 크기에 맞게 보간
-                        mask_latent = torch.nn.functional.interpolate(
-                            mask, size=person_latent.shape[-2:], mode="nearest"
-                        )
-                        # masked된 부분만 손실 계산
-                        # masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
-                        # masked_image_latent = image_latent * (mask_latent < 0.5)
-                        # loss = loss_fn(masked_person_latent, masked_image_latent)
-                    else:
-                        # 기본 전체 손실
                         loss = loss_fn(noise, noise_pred)
                 
                 # 그라디언트 계산
@@ -469,6 +449,7 @@ def main():
 
                             gt_np = np.array(gt_img)
                             pred_np = np.array(pred_img)
+                            # 되게 하기
                             # psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
                             # ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
                             # val_psnr.append(psnr_val)
