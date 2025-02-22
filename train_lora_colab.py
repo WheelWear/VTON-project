@@ -351,7 +351,7 @@ def main():
         # 2. LoRA 설정 및 적용
         lora_config = LoraConfig(
             r=args.lora_rank,
-            lora_alpha=args.lora_rank*2,
+            lora_alpha=args.lora_rank * 2,
             lora_dropout=0.1,
             target_modules=["to_q", "to_k", "to_v"],  
         )
@@ -395,7 +395,7 @@ def main():
         device = accelerator.device
         for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
             total_loss = 0.0
-            optimizer.zero_grad() # 옵티마이저 초기화
+            optimizer.zero_grad()  # 옵티마이저 초기화
             for step, batch in enumerate(dataloader):
                 with accelerator.accumulate(model):  # Gradient accumulation 시작
                     person = batch["person"]
@@ -434,7 +434,7 @@ def main():
             # Auto-logging이 손실을 이미 로깅하면 이 줄 제거 가능
             # mlflow.log_metrics({"avg_loss": avg_loss}, step=epoch)
 
-            # 5 에폭마다 모델 각각 저장
+            # 5. 에폭마다 모델 각각 저장
             os.makedirs(args.output_dir, exist_ok=True)
             if (epoch+1) % 5 == 0:
                 # validation
@@ -479,7 +479,6 @@ def main():
                                 gt_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_gt.jpg"))
                                 pred_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_pred.jpg"))
 
-                    
                 avg_psnr = np.mean(val_psnr)
                 avg_ssim = np.mean(val_ssim)
                 avg_lpips = np.mean(val_lpips)
@@ -490,9 +489,9 @@ def main():
                     "val_lpips": avg_lpips, 
                     }, step=global_step)
                 mlflow.log_metrics({
-                "val_psnr": avg_psnr,
-                "val_ssim": avg_ssim,
-                "val_lpips": avg_lpips
+                    "val_psnr": avg_psnr,
+                    "val_ssim": avg_ssim,
+                    "val_lpips": avg_lpips
                 }, step=global_step)
 
                 # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
@@ -515,9 +514,10 @@ def main():
                     wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch, "epoch": epoch+1})
                     wandb.run.summary["best_lpips"] = best_LPIPS
                     wandb.run.summary["best_epoch"] = best_epoch
-                    mlflow.log_param("best_lpips", best_LPIPS)
+                    # 태그 업데이트 (mlflow)
+                    mlflow.set_tag("best_lpips", best_LPIPS)
+                    mlflow.set_tag("best_epoch", best_epoch)
                 model.train()
-
 
             # loss가 감소하면 모델 저장
             if avg_loss < best_loss:
@@ -547,8 +547,9 @@ def main():
                     print(f"업로드 실패: {e}")
                 
                 wandb.log({"best_loss": best_loss, "best_epoch": best_epoch, "epoch": epoch+1})
-                mlflow.log_param("best_epoch", best_epoch)
-                mlflow.log_param("best_loss", best_loss)
+                # 태그 업데이트 (mlflow)
+                mlflow.set_tag("best_epoch", best_epoch)
+                mlflow.set_tag("best_loss", best_loss)
 
                 # wandb에 베스트 모델 업데이트 기록
                 wandb.run.summary["best_loss"] = best_loss
@@ -557,6 +558,7 @@ def main():
     print("학습 완료.")
     wandb.finish()
     mlflow.end_run()
+
 
 if __name__ == "__main__":
     main()
