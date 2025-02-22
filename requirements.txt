@@ -1,11 +1,9 @@
 fastapi
-torch==2.5.1
 diffusers
 peft
 wandb
 Pillow
 tqdm
-torchvision
 accelerate 
 git+https://github.com/huggingface/diffusers.git
 opencv-python
@@ -17,3 +15,6 @@ fvcore
 omegaconf
 av
 pyngrok
+cloudpickle
+pycocotools
+python-multipart

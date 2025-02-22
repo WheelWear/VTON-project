@@ -29,8 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# logs 폴더 생성 (존재하지 않을 경우)
-
 # CatVTON 경로 설정
 catvton_path = os.path.abspath(os.path.join(os.getcwd(), "CatVTON"))
 sys.path.append(catvton_path)

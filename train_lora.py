@@ -95,7 +95,7 @@ class TrainDataset(Dataset):
     
 class Custom_VITONHDTrainDataset(TrainDataset):
     def load_data(self):
-        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair.txt')
+        pair_txt = os.path.join(self.args.data_root_path, 'train_unpair_sample.txt')
         assert os.path.exists(pair_txt), f"File {pair_txt} does not exist."
         with open(pair_txt, 'r') as f:
             lines = f.readlines()
