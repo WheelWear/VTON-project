@@ -503,6 +503,7 @@ def main():
                     checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
                     checkpoint_path = os.path.join(args.output_dir, "best_checkpoint", checkpoint_filename)
                     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+                    lora_state_dict = get_peft_model_state_dict(model)
                     torch.save(lora_state_dict, checkpoint_path)
                     api.upload_file(
                         path_or_fileobj=checkpoint_path,
@@ -514,8 +515,6 @@ def main():
                     wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch, "epoch": epoch+1})
                     wandb.run.summary["best_lpips"] = best_LPIPS
                     wandb.run.summary["best_epoch"] = best_epoch
-                    mlflow.log_artifact(checkpoint_path)
-                    mlflow.log_param("best_epoch", best_epoch)
                     mlflow.log_param("best_lpips", best_LPIPS)
                 model.train()
 
@@ -548,7 +547,6 @@ def main():
                     print(f"업로드 실패: {e}")
                 
                 wandb.log({"best_loss": best_loss, "best_epoch": best_epoch, "epoch": epoch+1})
-                mlflow.log_artifact(checkpoint_path)
                 mlflow.log_param("best_epoch", best_epoch)
                 mlflow.log_param("best_loss", best_loss)
 
