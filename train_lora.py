@@ -34,7 +34,7 @@ import wandb
 사용할 파이프라인 고르기
 """
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-# sys.path.append(os.path.abspath(os.path.join(os.path.getcwd(), "CatVTON")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "CatVTON")))
 # from model.pipeline_train import CatVTONPipeline_Train
 # from utils import compute_vae_encodings, tensor_to_image, numpy_to_pil
 from CatVTON.model.pipeline_train import CatVTONPipeline_Train
@@ -402,22 +402,7 @@ def main():
                         generator=generator,
                         is_train=True,  # 학습 모드
                     )
-                    with torch.no_grad():
-                        person_latent = compute_vae_encodings(person, pipeline.vae)
-                    
-                    # masked loss 사용 가능하게 추가
-                    if args.use_maked_loss:
-                        # mask를 latent 크기에 맞게 보간
-                        mask_latent = torch.nn.functional.interpolate(
-                            mask, size=person_latent.shape[-2:], mode="nearest"
-                        )
-                        # masked된 부분만 손실 계산
-                        # masked_person_latent = person_latent * (mask_latent < 0.5)  # 마스크 영역만 추출
-                        # masked_image_latent = image_latent * (mask_latent < 0.5)
-                        # loss = loss_fn(masked_person_latent, masked_image_latent)
-                    else:
-                        # 기본 전체 손실
-                        loss = loss_fn(noise, noise_pred)
+                    loss = loss_fn(noise, noise_pred)
                 
                 # 그라디언트 계산
                 accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
@@ -436,7 +421,7 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
         
         # 5 에폭마다 모델 각각 저장
-        if (epoch+1) % 5 == 0:
+        if (epoch+1) % 1 == 0:
             # validation
             model.eval()
             val_psnr, val_ssim, val_lpips = [], [], []
@@ -464,10 +449,10 @@ def main():
 
                             gt_np = np.array(gt_img)
                             pred_np = np.array(pred_img)
-                            # psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
-                            # ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
-                            # val_psnr.append(psnr_val)
-                            # val_ssim.append(ssim_val)
+                            psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
+                            ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
+                            val_psnr.append(psnr_val)
+                            val_ssim.append(ssim_val)
 
                             gt_tensor, pred_tensor = img2tensor([gt_np, pred_np], bgr2rgb=True, float32=True)
                             normalize(gt_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)

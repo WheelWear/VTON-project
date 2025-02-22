@@ -39,6 +39,11 @@ from accelerate import Accelerator
 from huggingface_hub import HfApi
 from datetime import datetime
 api = HfApi()
+# dagshub + mlflow로 기록
+import dagshub
+import mlflow
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LoRA Fine-tuning for Latent Diffusion based CatVTON")
@@ -303,229 +308,257 @@ def main():
         precision = "fp16"
     else:
         precision = "fp32"
+        
+    dagshub.init(repo_owner='ColdTbrew', repo_name='VTON-project', mlflow=True)
     wandb.init(project="VTON-project", config=vars(args))
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    accelerator = Accelerator(mixed_precision=precision)
-    device = accelerator.device
+    # MLflow 실험 시작 및 Auto-logging 활성화
+    mlflow.set_experiment("CatVTON_LoRA_Training")
+    with mlflow.start_run(run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+        # PyTorch Auto-logging 활성화
+        mlflow.pytorch.autolog()
+            
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        accelerator = Accelerator(mixed_precision=precision)
+        device = accelerator.device
 
-    # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
-    base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
-    attn_ckpt = "zhengchong/CatVTON"
-    attn_ckpt_version = "mix"
-    lpips_model_name = 'vgg'
+        # 1. 파이프라인과 모델 초기화 (여러분의 환경에 맞게 수정)
+        base_ckpt = "booksforcharlie/stable-diffusion-inpainting"
+        attn_ckpt = "zhengchong/CatVTON"
+        attn_ckpt_version = "mix"
+        lpips_model_name = 'vgg'
 
-    pipeline = CatVTONPipeline_Train(
-        base_ckpt, 
-        attn_ckpt,
-        attn_ckpt_version,
-        device=device,
-        skip_safety_check=True,
-    )
-    pipeline.vae.eval()
+        pipeline = CatVTONPipeline_Train(
+            base_ckpt, 
+            attn_ckpt,
+            attn_ckpt_version,
+            device=device,
+            skip_safety_check=True,
+        )
+        pipeline.vae.eval()
 
-    # VAE 모델의 파라미터를 고정
-    for param in pipeline.vae.parameters():
-        param.requires_grad = False
-    # UNet 모델의 어텐션 제외 파라미터를 고정
-    pipeline.unet.train()
-    for name, param in pipeline.unet.named_parameters():
-        if "attention" not in name:
+        # VAE 모델의 파라미터를 고정
+        for param in pipeline.vae.parameters():
             param.requires_grad = False
+        # UNet 모델의 어텐션 제외 파라미터를 고정
+        pipeline.unet.train()
+        for name, param in pipeline.unet.named_parameters():
+            if "attention" not in name:
+                param.requires_grad = False
 
-    model = pipeline.unet 
-    model = model.to(device)
+        model = pipeline.unet 
+        model = model.to(device)
 
-    # 2. LoRA 설정 및 적용
-    lora_config = LoraConfig(
-        r=args.lora_rank,
-        lora_alpha=args.lora_rank*2,
-        lora_dropout=0.1,
-        target_modules=["to_q", "to_k", "to_v"],  
-    )
-    model = get_peft_model(model, lora_config)
-    model = model.to(device)
+        # 2. LoRA 설정 및 적용
+        lora_config = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_rank*2,
+            lora_dropout=0.1,
+            target_modules=["to_q", "to_k", "to_v"],  
+        )
+        model = get_peft_model(model, lora_config)
+        model = model.to(device)
 
-    print("LoRA 적용 완료. 현재 학습 파라미터 수:",
-          sum(p.numel() for p in model.parameters() if p.requires_grad))
-    pipeline.unet = model
+        print("LoRA 적용 완료. 현재 학습 파라미터 수:",
+            sum(p.numel() for p in model.parameters() if p.requires_grad))
+        pipeline.unet = model
 
-    # 4. 옵티마이저 및 손실 함수 정의
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    loss_fn = nn.MSELoss()
+        # 4. 옵티마이저 및 손실 함수 정의
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+        loss_fn = nn.MSELoss()
 
-    # dataset = VITONHDTrainDataset(args)
-    dataset = Custom_VITONHDTrainDataset(args)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    
-    val_dataset = Custom_VITONHDTestDataset(args)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-
-    # Accelerator로 모델, 옵티마이저, 데이터로더 준비
-    model, optimizer, dataloader, val_dataloader = accelerator.prepare(model, optimizer, dataloader, val_dataloader)
-
-    generator = torch.Generator(device='cuda').manual_seed(args.seed)
-    best_loss = float("inf")
-    best_PSNR = float("-inf")  # 클수록 좋음
-    best_SSIM = float("-inf")  # 클수록 좋음
-    best_LPIPS = float("inf")  # 작을수록 좋음
-
-    best_epoch = -1
-    global_step = 0
-    model.train()
-    
-    # lpips
-    if lpips_model_name == 'vgg':
-        lpips_vgg = lpips.LPIPS(net='vgg').to(device)
-    if lpips_model_name == 'alex':
-        lpips_alex = lpips.LPIPS(net='alex').to(device)
-
-    device = accelerator.device
-    for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
-        total_loss = 0.0
-        optimizer.zero_grad() # 옵티마이저 초기화
-        for step, batch in enumerate(dataloader):
-            with accelerator.accumulate(model):  # Gradient accumulation 시작
-                person = batch["person"]
-                cloth = batch["cloth"]
-                mask = batch["mask"]
-
-                with accelerator.autocast():
-                    noise, noise_pred = pipeline(
-                        person,
-                        cloth,
-                        mask,
-                        guidance_scale=args.guidance_scale,
-                        height=args.height,
-                        width=args.width,
-                        generator=generator,
-                        is_train=True,  # 학습 모드
-                    )
-                    with torch.no_grad():
-                        loss = loss_fn(noise, noise_pred)
-                
-                # 그라디언트 계산
-                accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
-                
-                # accumulation_steps마다 업데이트
-                if (step + 1) % args.accumulation_steps == 0 or (step + 1) == len(dataloader):
-                    optimizer.step()
-                    optimizer.zero_grad()
-
-                total_loss += loss.item()
-                global_step += 1
-                wandb.log({"train_loss": loss.item(), "global_step": global_step})
-        avg_loss = total_loss / len(dataloader)
-        print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
+        # dataset = VITONHDTrainDataset(args)
+        dataset = Custom_VITONHDTrainDataset(args)
+        dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
         
-        os.makedirs(args.output_dir, exist_ok=True)
+        val_dataset = Custom_VITONHDTestDataset(args)
+        val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+
+        # Accelerator로 모델, 옵티마이저, 데이터로더 준비
+        model, optimizer, dataloader, val_dataloader = accelerator.prepare(model, optimizer, dataloader, val_dataloader)
+
+        generator = torch.Generator(device='cuda').manual_seed(args.seed)
+        best_loss = float("inf")
+        best_PSNR = float("-inf")  # 클수록 좋음
+        best_SSIM = float("-inf")  # 클수록 좋음
+        best_LPIPS = float("inf")  # 작을수록 좋음
+
+        best_epoch = -1
+        global_step = 0
+        model.train()
         
-        # 5 에폭마다 모델 각각 저장
-        if (epoch+1) % 5 == 0:
-            # validation
-            model.eval()
-            val_psnr, val_ssim, val_lpips = [], [], []
-            with torch.no_grad():
-                generator = torch.Generator(device='cuda').manual_seed(args.seed)
-                with accelerator.autocast():
-                    for batch in tqdm(val_dataloader, desc="Validation", total=len(val_dataloader)):
-                        person = batch["person"]
-                        cloth  = batch["cloth"]
-                        mask   = batch["mask"]
-                        results = pipeline(
+        # lpips
+        if lpips_model_name == 'vgg':
+            lpips_vgg = lpips.LPIPS(net='vgg').to(device)
+        if lpips_model_name == 'alex':
+            lpips_alex = lpips.LPIPS(net='alex').to(device)
+
+        device = accelerator.device
+        for epoch in tqdm(range(args.num_epochs), desc="Epoch", total=args.num_epochs):
+            total_loss = 0.0
+            optimizer.zero_grad() # 옵티마이저 초기화
+            for step, batch in enumerate(dataloader):
+                with accelerator.accumulate(model):  # Gradient accumulation 시작
+                    person = batch["person"]
+                    cloth = batch["cloth"]
+                    mask = batch["mask"]
+
+                    with accelerator.autocast():
+                        noise, noise_pred = pipeline(
                             person,
                             cloth,
                             mask,
-                            num_inference_steps=args.num_inference_steps,
                             guidance_scale=args.guidance_scale,
                             height=args.height,
                             width=args.width,
                             generator=generator,
-                            is_train=False,  # 추론 모드
+                            is_train=True,  # 학습 모드
                         )
+                        loss = loss_fn(noise, noise_pred)
+                    
+                    # 그라디언트 계산
+                    accelerator.backward(loss / args.accumulation_steps)  # 손실을 나눠서 누적
+                    
+                    # accumulation_steps마다 업데이트
+                    if (step + 1) % args.accumulation_steps == 0 or (step + 1) == len(dataloader):
+                        optimizer.step()
+                        optimizer.zero_grad()
 
-                        gt_person = to_pil_image(person)
-                        for i, (gt_img, pred_img) in enumerate(zip(gt_person, results)):
+                    total_loss += loss.item()
+                    global_step += 1
+                    wandb.log({"train_loss": loss.item(), "global_step": global_step})
+            avg_loss = total_loss / len(dataloader)
 
-                            gt_np = np.array(gt_img)
-                            pred_np = np.array(pred_img)
-                            # 되게 하기
-                            # psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
-                            # ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
-                            # val_psnr.append(psnr_val)
-                            # val_ssim.append(ssim_val)
+            # print and log
+            print(f"Epoch [{epoch+1}/{args.num_epochs}], Loss: {avg_loss:.4f}")
+            wandb.log({"avg_loss": avg_loss, "epoch": epoch+1})
+            # Auto-logging이 손실을 이미 로깅하면 이 줄 제거 가능
+            # mlflow.log_metrics({"avg_loss": avg_loss}, step=epoch)
 
-                            gt_tensor, pred_tensor = img2tensor([gt_np, pred_np], bgr2rgb=True, float32=True)
-                            normalize(gt_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
-                            normalize(pred_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
-                            lpips_val = lpips_vgg(gt_tensor.unsqueeze(0).to(device), pred_tensor.unsqueeze(0).to(device)).cpu().item()
-                            val_lpips.append(lpips_val)
+            # 5 에폭마다 모델 각각 저장
+            os.makedirs(args.output_dir, exist_ok=True)
+            if (epoch+1) % 5 == 0:
+                # validation
+                model.eval()
+                val_psnr, val_ssim, val_lpips = [], [], []
+                with torch.no_grad():
+                    generator = torch.Generator(device='cuda').manual_seed(args.seed)
+                    with accelerator.autocast():
+                        for batch in tqdm(val_dataloader, desc="Validation", total=len(val_dataloader)):
+                            person = batch["person"]
+                            cloth  = batch["cloth"]
+                            mask   = batch["mask"]
+                            results = pipeline(
+                                person,
+                                cloth,
+                                mask,
+                                num_inference_steps=args.num_inference_steps,
+                                guidance_scale=args.guidance_scale,
+                                height=args.height,
+                                width=args.width,
+                                generator=generator,
+                                is_train=False,  # 추론 모드
+                            )
 
-                            output_dir = os.path.join(args.output_dir, f"val_epoch_{epoch+1}")
-                            os.makedirs(output_dir, exist_ok=True)
-                            gt_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_gt.jpg"))
-                            pred_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_pred.jpg"))
+                            gt_person = to_pil_image(person)
+                            for i, (gt_img, pred_img) in enumerate(zip(gt_person, results)):
+                                gt_np = np.array(gt_img)
+                                pred_np = np.array(pred_img)
+                                psnr_val = calculate_psnr(gt_np, pred_np, crop_border=0)
+                                ssim_val = calculate_ssim(gt_np, pred_np, crop_border=0)
+                                val_psnr.append(psnr_val)
+                                val_ssim.append(ssim_val)
 
-                
-            avg_psnr = np.mean(val_psnr)
-            avg_ssim = np.mean(val_ssim)
-            avg_lpips = np.mean(val_lpips)
-            print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
-            wandb.log({"val_lpips": avg_lpips})
-            # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
-            if avg_lpips < best_LPIPS:
-                best_LPIPS = avg_lpips
+                                gt_tensor, pred_tensor = img2tensor([gt_np, pred_np], bgr2rgb=True, float32=True)
+                                normalize(gt_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
+                                normalize(pred_tensor, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True)
+                                lpips_val = lpips_vgg(gt_tensor.unsqueeze(0).to(device), pred_tensor.unsqueeze(0).to(device)).cpu().item()
+                                val_lpips.append(lpips_val)
+
+                                output_dir = os.path.join(args.output_dir, f"val_epoch_{epoch+1}")
+                                os.makedirs(output_dir, exist_ok=True)
+                                gt_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_gt.jpg"))
+                                pred_img.save(os.path.join(output_dir, f"{batch['person_name'][i]}_pred.jpg"))
+
+                    
+                avg_psnr = np.mean(val_psnr)
+                avg_ssim = np.mean(val_ssim)
+                avg_lpips = np.mean(val_lpips)
+                print(f"Validation - PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}, LPIPS: {avg_lpips:.4f}")
+                wandb.log({
+                    "val_psnr": avg_psnr, 
+                    "val_ssim": avg_ssim, 
+                    "val_lpips": avg_lpips, 
+                    }, step=global_step)
+                mlflow.log_metrics({
+                "val_psnr": avg_psnr,
+                "val_ssim": avg_ssim,
+                "val_lpips": avg_lpips
+                }, step=global_step)
+
+                # 모델 저장 (LPIPS 기준으로 최적 모델 저장)
+                if avg_lpips < best_LPIPS:
+                    best_LPIPS = avg_lpips
+                    best_epoch = epoch + 1
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+                    checkpoint_path = os.path.join(args.output_dir, "best_checkpoint", checkpoint_filename)
+                    os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+                    torch.save(lora_state_dict, checkpoint_path)
+                    api.upload_file(
+                        path_or_fileobj=checkpoint_path,
+                        path_in_repo=checkpoint_filename,
+                        repo_id="Coldbrew9/wheel-CatVTON",
+                        repo_type="model",
+                    )
+                    print(f"best lpips lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
+                    wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch, "epoch": epoch+1})
+                    wandb.run.summary["best_lpips"] = best_LPIPS
+                    wandb.run.summary["best_epoch"] = best_epoch
+                    mlflow.log_artifact(checkpoint_path)
+                    mlflow.log_param("best_epoch", best_epoch)
+                    mlflow.log_param("best_lpips", best_LPIPS)
+                model.train()
+
+
+            # loss가 감소하면 모델 저장
+            if avg_loss < best_loss:
+                best_loss = avg_loss
                 best_epoch = epoch + 1
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
-                checkpoint_path = os.path.join(args.output_dir, "best_checkpoint", checkpoint_filename)
-                os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+
+                checkpoint_filename = f"best_loss_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+                checkpoint_path = os.path.join(args.output_dir, checkpoint_filename)
+                os.makedirs(args.output_dir, exist_ok=True)
+                
+                # 모델 저장
+                lora_state_dict = get_peft_model_state_dict(model)
                 torch.save(lora_state_dict, checkpoint_path)
-                api.upload_file(
-                    path_or_fileobj=checkpoint_path,
-                    path_in_repo=checkpoint_filename,
-                    repo_id="Coldbrew9/wheel-CatVTON",
-                    repo_type="model",
-                )
-                print(f"best lpips lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
-                wandb.log({"best_lpips": best_LPIPS, "best_epoch": best_epoch})
-            model.train()
+                print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
 
+                # Hugging Face에 업로드
+                try:
+                    api.upload_file(
+                        path_or_fileobj=checkpoint_path,
+                        path_in_repo=checkpoint_filename,
+                        repo_id="Coldbrew9/wheel-CatVTON",
+                        repo_type="model",
+                    )
+                    print(f"모델 업로드 완료: {checkpoint_filename} -> Coldbrew9/wheel-CatVTON")
+                except Exception as e:
+                    print(f"업로드 실패: {e}")
+                
+                wandb.log({"best_loss": best_loss, "best_epoch": best_epoch, "epoch": epoch+1})
+                mlflow.log_artifact(checkpoint_path)
+                mlflow.log_param("best_epoch", best_epoch)
+                mlflow.log_param("best_loss", best_loss)
 
-        # loss가 감소하면 모델 저장
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            best_epoch = epoch + 1
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            checkpoint_filename = f"best_loss_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
-            checkpoint_path = os.path.join(args.output_dir, checkpoint_filename)
-            os.makedirs(args.output_dir, exist_ok=True)
-            
-            # 모델 저장
-            lora_state_dict = get_peft_model_state_dict(model)
-            torch.save(lora_state_dict, checkpoint_path)
-            print(f"loss best lora 모델 저장: {checkpoint_path} (Epoch {best_epoch})")
-
-            # Hugging Face에 업로드
-            try:
-                api.upload_file(
-                    path_or_fileobj=checkpoint_path,
-                    path_in_repo=checkpoint_filename,
-                    repo_id="Coldbrew9/wheel-CatVTON",
-                    repo_type="model",
-                )
-                print(f"모델 업로드 완료: {checkpoint_filename} -> Coldbrew9/wheel-CatVTON")
-            except Exception as e:
-                print(f"업로드 실패: {e}")
-            
-            wandb.log({"best_loss": best_loss, "best_epoch": best_epoch})
-            # wandb에 베스트 모델 업데이트 기록
-            wandb.run.summary["best_loss"] = best_loss
-            wandb.run.summary["best_epoch"] = best_epoch
+                # wandb에 베스트 모델 업데이트 기록
+                wandb.run.summary["best_loss"] = best_loss
+                wandb.run.summary["best_epoch"] = best_epoch
 
     print("학습 완료.")
     wandb.finish()
+    mlflow.end_run()
 
 if __name__ == "__main__":
     main()

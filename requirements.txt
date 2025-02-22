@@ -18,3 +18,5 @@ pyngrok
 cloudpickle
 pycocotools
 python-multipart
+dagshub
+mlflow
