@@ -313,8 +313,9 @@ def main():
     wandb.init(project="VTON-project", config=vars(args))
     # MLflow 실험 시작 및 Auto-logging 활성화
     mlflow.set_experiment("CatVTON_LoRA_Training")
-    with mlflow.start_run(run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
-        # PyTorch Auto-logging 활성화
+    run_name = os.path.join(args.output_dir, f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_params(vars(args))
         mlflow.pytorch.autolog()
             
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -487,7 +488,7 @@ def main():
                     "val_psnr": avg_psnr, 
                     "val_ssim": avg_ssim, 
                     "val_lpips": avg_lpips, 
-                    }, step=global_step)
+                    })
                 mlflow.log_metrics({
                     "val_psnr": avg_psnr,
                     "val_ssim": avg_ssim,
