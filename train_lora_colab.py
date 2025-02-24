@@ -368,7 +368,7 @@ def main():
         print("LoRA 적용 완료. 현재 학습 파라미터 수:",
             sum(p.numel() for p in model.parameters() if p.requires_grad))
         pipeline.unet = model
-
+        
         # 4. 옵티마이저 및 손실 함수 정의
         optimizer = optim.AdamW(model.parameters(), lr=args.lr)
         loss_fn = nn.MSELoss()
