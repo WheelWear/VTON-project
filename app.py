@@ -119,9 +119,9 @@ async def tryon(request: TryonRequest):
     elif request.bottom_cloth_url and cloth_type == "lower":
         cloth_path = download_image(request.bottom_cloth_url, "tryon-images/bottom_cloth.jpg")
         logger.info(f"Downloaded bottom cloth image to {cloth_path}")
-    elif request.dress_image_url and cloth_type == "dress":
-        cloth_path = download_image(request.dress_image_url, "tryon-images/dress.jpg")
-        logger.info(f"Downloaded dress image to {cloth_path}")
+    elif request.dress_image_url and cloth_type == "overall":
+        cloth_path = download_image(request.dress_image_url, "tryon-images/overall.jpg")
+        logger.info(f"Downloaded overall image to {cloth_path}")
     else:
         logger.error(f"cloth_type '{cloth_type}'에 맞는 cloth URL이 제공되지 않았습니다.")
         raise ValueError(f"cloth_type '{cloth_type}'에 맞는 cloth URL(top_cloth_url, bottom_cloth_url, dress_image_url)이 제공되지 않았습니다.")
