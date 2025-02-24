@@ -14,6 +14,8 @@ ckpt/
 ckpt/.gitkeep
 !data/.gitkeep
 data.zip
+attn_ckpt/
+base_ckpt/
 # C extensions
 *.so
 experiments/

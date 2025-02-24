@@ -345,7 +345,6 @@ def main():
         for name, param in pipeline.unet.named_parameters():
             if "attention" not in name:
                 param.requires_grad = False
-
         model = pipeline.unet 
         model = model.to(device)
 
@@ -358,6 +357,13 @@ def main():
         )
         model = get_peft_model(model, lora_config)
         model = model.to(device)
+
+        # 3. LoRA 파라미터 학습 설정
+        for name, param in model.named_parameters():
+            if "lora" in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
 
         print("LoRA 적용 완료. 현재 학습 파라미터 수:",
             sum(p.numel() for p in model.parameters() if p.requires_grad))
@@ -499,8 +505,8 @@ def main():
                 if avg_lpips < best_LPIPS:
                     best_LPIPS = avg_lpips
                     best_epoch = epoch + 1
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+                    
+                    checkpoint_filename = f"best_lpips_lora_r{args.lora_rank}_lr{args.lr}_ep{best_epoch}_{run_name}.pt"
                     checkpoint_path = os.path.join(args.output_dir, "best_checkpoint", checkpoint_filename)
                     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
                     lora_state_dict = get_peft_model_state_dict(model)
@@ -524,9 +530,8 @@ def main():
             if avg_loss < best_loss:
                 best_loss = avg_loss
                 best_epoch = epoch + 1
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-                checkpoint_filename = f"best_loss_lora_r{args.lora_rank}_ep{best_epoch}_{timestamp}.pt"
+                checkpoint_filename = f"best_loss_lora_r{args.lora_rank}_lr{args.lr}_ep{best_epoch}_{run_name}.pt"
                 checkpoint_path = os.path.join(args.output_dir, checkpoint_filename)
                 os.makedirs(args.output_dir, exist_ok=True)
                 
