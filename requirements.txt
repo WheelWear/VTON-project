@@ -8,7 +8,6 @@ accelerate
 git+https://github.com/huggingface/diffusers.git
 opencv-python
 lpips
-uvicorn
 google-cloud-storage
 google-auth
 fvcore
@@ -20,3 +19,4 @@ pycocotools
 python-multipart
 dagshub
 mlflow
+pydantic

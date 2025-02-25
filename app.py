@@ -28,13 +28,33 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
 # CatVTON 경로 설정
 catvton_path = os.path.abspath(os.path.join(os.getcwd(), "CatVTON"))
 sys.path.append(catvton_path)
 from model.pipeline import CatVTONPipeline
 from model.cloth_masker import AutoMasker
 from utils import init_weight_dtype, resize_and_crop, resize_and_padding, prepare_image, prepare_mask_image, tensor_to_image
+
+# for recommend_size
+from llm_agent import recommend_size
+
+# 입력 데이터 모델 정의
+class InputData(BaseModel):
+    brand: str
+    cloth_size: str
+    cloth_type: str
+    gender: str
+    chest_circumference: float
+    shoulder_width: float
+    arm_length: float
+    waist_circumference: float
+
+# 출력 데이터 모델 정의
+class OutputData(BaseModel):
+    recommend_size: str
+    additional_explanation: str
+    references: list
+    reference_num: int
 
 # GCS 설정
 credentials = service_account.Credentials.from_service_account_file('./.env/web-project-438308-a8f3849fdf23.json')
@@ -214,6 +234,15 @@ async def tryon_upload(
 
     return StreamingResponse(img_byte_arr, media_type="image/png")
 
+# 사이즈 추천 엔드포인트
+@app.post("/recommend_size", response_model=OutputData)
+async def recommend_size_endpoint(data: InputData):
+    """
+    사용자의 데이터를 받아 agent.py의 recommend_size 함수로 사이즈를 추천받아.
+    """
+    result = recommend_size(data)
+    return result
+
 def download_image(url: str, save_path: str) -> str:
     try:
         logger.info(f"Downloading image from {url} to {save_path}")
@@ -230,4 +259,4 @@ def download_image(url: str, save_path: str) -> str:
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting FastAPI application with Uvicorn server")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
