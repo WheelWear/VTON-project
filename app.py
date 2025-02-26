@@ -40,14 +40,14 @@ from llm_agent import recommend_size
 
 # 입력 데이터 모델 정의
 class InputData(BaseModel):
-    brand: str
-    cloth_size: str
-    cloth_type: str
-    gender: str
-    chest_circumference: float
-    shoulder_width: float
-    arm_length: float
-    waist_circumference: float
+    brand: Optional[str] = None
+    cloth_size: Optional[str] = None
+    cloth_type: str  # 필수
+    gender: Optional[str] = None
+    chest_circumference: Optional[float] = None
+    shoulder_width: Optional[float] = None
+    arm_length: Optional[float] = None
+    waist_circumference: Optional[float] = None
 
 # 출력 데이터 모델 정의
 class OutputData(BaseModel):

@@ -25,13 +25,16 @@ SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
 SERPAPI_URL = "https://serpapi.com/search"
 
 # SerpAPI를 통해 웹 검색 수행 함수
-def search_brand_trends(brand: str):
+def search_brand_trends(data):
     """
     SerpAPI를 사용해 브랜드의 의류 사이즈 경향에 대한 웹 검색을 수행하고,
     제목, 링크, 요약을 포함한 결과를 반환합니다.
+    - Gender: {data.gender}
+    - Brand: {data.brand}
+    - Cloth type: {data.cloth_type}
     """
     params = {
-        "q": f"{brand} clothing size trends recent reviews",
+        "q": f"{data.gender} {data.cloth_type} {data.brand} clothing for size trends",
         "api_key": SERPAPI_KEY,
         "num": 3  # 상위 3개 검색 결과
     }
@@ -76,14 +79,14 @@ def recommend_size(data):
     웹 검색 결과의 출처(링크)도 함께 반환합니다.
     """
     # SerpAPI로 브랜드 검색
-    search_results = search_brand_trends(data.brand)
+    search_results = search_brand_trends(data)
 
     # 검색 결과를 프롬프트에 포함할 문자열 생성
     search_summary = "\n".join([
         f"- Title: {result['title']}\n  Link: {result['link']}\n  Snippet: {result['snippet']}"
         for result in search_results
     ])
-    
+    logging.info(f"Search results: \n{search_results}")
     # LLM에 보낼 프롬프트 작성
     prompt = f"""
     You are a clothing size recommendation expert. Based on the following user data and web search results, recommend an appropriate size for the {data.brand} brand and provide an explanation. Finally reply in Korean.
