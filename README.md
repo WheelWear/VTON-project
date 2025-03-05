@@ -1,4 +1,7 @@
 # VTON-project
+To-do
+- docker image complete
+  
 # Virtual Try-On Server
 This project provides a server for a virtual try-on system, allowing users to test clothing virtually. It leverages deep learning models and is built with Python, PyTorch, and CUDA.
 
@@ -32,7 +35,8 @@ This project provides a server for a virtual try-on system, allowing users to te
 
 
 input ex.
-```{
+```
+{
   "brand": "나이키",
   "cloth_size": "100",
   "cloth_type" : "top",
