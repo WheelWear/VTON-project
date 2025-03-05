@@ -1,5 +1,32 @@
 # VTON-project
+# Virtual Try-On Server
+This project provides a server for a virtual try-on system, allowing users to test clothing virtually. It leverages deep learning models and is built with Python, PyTorch, and CUDA.
 
+## Prerequisites
+- **Python**: 3.10
+- **CUDA**: 12.4 (Ensure NVIDIA CUDA Toolkit 12.4 is installed on your system)
+- **Recommended**: Use a Conda environment for dependency management
+## Setup Instructions
+1. **Create and Activate a Conda Environment** (optional but recommended):
+   ```bash
+   conda create -n vton python=3.10
+   conda activate vton
+   ```
+2. **How to start virtual try-on FastAPI server**
+    ```
+    pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+    git clone https://github.com/WheelWear/VTON-project.git
+    pip install -r requirements.txt
+    python -m uvicorn app:app --host 0.0.0.0 --port 8000
+    ```
+    * Use ngrok for secure tunnel from a public URL to your local machine
+    
+    Run this if you need original CatVTON for training
+    ```
+    cd VTON-project
+    git clone https://github.com/Zheng-Chong/CatVTON.git
+    cp pipeline_train.py CatVTON/model/
+    ```
 ### llm_agent.py
 - recommend_size  엔드포인트
 
