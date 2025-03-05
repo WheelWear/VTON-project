@@ -1,5 +1,10 @@
 # VTON-project
-To-do
+**SKT FLY-AI 6기 프로젝트 _Wheel Wear_  
+AI 모델 학습 및 FastAPI 배포 Repo**
+
+_wrote by Seunghyuk Choi_  
+
+### To-do
 - docker image complete
   
 # Virtual Try-On Server
