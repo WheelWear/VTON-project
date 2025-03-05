@@ -30,6 +30,11 @@ This project provides a server for a virtual try-on system, allowing users to te
     git clone https://github.com/Zheng-Chong/CatVTON.git
     cp pipeline_train.py CatVTON/model/
     ```
+    Run with Docker
+   ```
+   docker pull coldbrew9/wheelwear-cu12.4-p3.10:latest
+   docker run --gpus all -it -p 8000:8000 coldbrew9/wheelwear-cu12.4-p3.10:latest
+   ```
 ### llm_agent.py
 - recommend_size  엔드포인트
 
@@ -89,7 +94,7 @@ docker pull nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 #docker build
 docker build -t coldbrew9/wheelwear-cu12.4-p3.10:latest .
 #docker run
-docker run --gpus all -it -p 8000:8000 -v "$($PWD.Path):/app" coldbrew9/wheelwear-cu12.4-p3.10:latest
+docker run --gpus all -it -p 8000:8000 coldbrew9/wheelwear-cu12.4-p3.10:latest
 ```
 
 ## Run Train
