@@ -19,26 +19,26 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
     ln -sf /usr/bin/python3.10 /usr/bin/python
     
 RUN pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-# 종속성 설치 (requirements.txt 기반)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
 # VTON-PROJECT 리포지토리 클론
 RUN git clone https://github.com/WheelWear/VTON-project.git 
-# CatVTON 서브모듈 리포지토리 클론 (VTON-PROJECT 내부)
 WORKDIR /app/VTON-project
+RUN pip install --no-cache-dir -r requirements.txt
 
+# CatVTON 서브모듈 리포지토리 클론 (VTON-PROJECT 내부)
 RUN git clone https://github.com/Zheng-Chong/CatVTON.git
+
 # pipeline_train.py 파일을 CatVTON/model 디렉토리로 복사
 RUN cp pipeline_train.py CatVTON/model/
 
 # 작업 디렉토리 복귀
 
 # FastAPI 실행 (app.py를 사용하여 실행)
-COPY .env/web-project-438308-a8f3849fdf23.json .env/web-project-438308-a8f3849fdf23.json
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# COPY .env/web-project-438308-a8f3849fdf23.json .env/web-project-438308-a8f3849fdf23.json
+# CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # 메타데이터 추가 (선택 사항)
-LABEL maintainer="Your Name <shchoi8687@gmail.com>"
+LABEL maintainer="Seung hyuk Choi <shchoi8687@gmail.com>"
 LABEL description="CUDA-enabled FastAPI application for Wheelwear-VTON project"
 
 # 도커 실행

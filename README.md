@@ -6,6 +6,69 @@ _wrote by Seunghyuk Choi_
 
 ### To-do
 - docker image complete
+
+## Project Workflow
+
+이 리포지토리는 **데이터셋 구축 → 데이터 전처리 → 모델 학습 → 모델 서빙 → 배포**의 전체 과정을 상세하게 보여줍니다. 각 단계별로 중요한 스크립트와 노트북 파일들을 확인할 수 있습니다.
+
+### 1. 데이터셋 구축 및 전처리
+- **Notebook 폴더 (`notebook/`)**
+  - 모델 공부와 데이터 전처리 과정을 인터랙티브하게 체험할 수 있는 여러 Jupyter Notebook 파일들이 포함되어 있습니다.
+    1. **put_file_name_from_raw.ipynb**  
+       사람이미지에 새로운 파일명을 부여하며, 이미지 회전, 사람 이미지의 경우 리사이즈 및 크롭, 옷의 경우 리사이즈 및 패딩을 진행합니다. 또한, rembg를 이용해 배경을 흰색으로 제거하는 과정을 포함합니다.
+    2. **자동 마스킹 기법 실험**  
+       사람 상체와 하체는 Automasker를 활용해 마스크 이미지를 생성하지만, 옷 이미지의 마스킹 성능이 부족하여 `automatic_mask_generator_example.ipynb`를 통한 sam2 기법(또는 roboflow 실험)을 적용하는 과정을 다룹니다.
+    3. **얼굴 지우기 실험**  
+       `make_dataset_sample_imgs.ipynb`와 `mosiac_all_person_img.ipynb`를 통해 얼굴 제거 전처리 과정을 수행합니다.
+    4. **학습 샘플 페어 생성**  
+       **make_train_pair.ipynb**: 사람이미지와 옷 이미지의 페어 생성을 위해 `train_unpair.txt`와 `test_unpair.txt` 파일을 생성하는 전체 과정을 확인할 수 있습니다.
+    - `prove_weight_diff.ipynb`: 학습 후 가중치 차이를 검증하는 등, 모델의 성능 및 변화를 분석합니다.
+  
+
+### 2. 모델 학습
+- **Toy Experiments 내 학습 스크립트**
+  - 학습 코드가 CatVTON에서 제공되지 않아 직접 만드는 과정 중 생성된 파일
+  - LoRA 기반 모델 학습, 손실 함수 설정, 평가 지표 계산 등의 모델 학습 과정을 다룹니다.
+
+### 3. 모델 배포 및 추론
+- **app.py**
+  - FastAPI를 이용한 REST API 서버 코드로, 이미지 업로드/다운로드, 전처리, 모델 추론, 결과 이미지 저장 및 Google Cloud Storage 업로드를 담당합니다.
+  - 실제 서비스 환경에서 모델 배포 및 추론 프로세스를 확인할 수 있습니다.  
+
+## 사용된 기술 스택
+
+- **Programming Language**: Python 3.10
+- **API Framework**: FastAPI, Uvicorn
+- **Machine Learning & Deep Learning**:
+  - PyTorch (모델 학습, GPU 가속)
+  - Hugging Face Diffusers (이미지 생성 및 inpainting)
+  - PEFT (LoRA, 모델 파인튜닝)
+  - PyTorch Accelerate (혼합 정밀도 및 분산 학습 지원)
+- **Image Processing & Computer Vision**:
+  - Pillow (이미지 처리)
+  - OpenCV (영상 처리 및 변환)
+  - NumPy (수치 계산)
+  - rembg (배경 제거)
+  - SAM2, Automasker (자동 마스킹 기법)
+- **Model Evaluation**:
+  - LPIPS (이미지 유사도 평가)
+  - PSNR, SSIM (영상 품질 평가)
+- **Experiment Tracking & Logging**:
+  - wandb (실험 기록 및 모니터링)
+  - MLflow (실험 메타데이터 및 모델 관리)
+  - Dagshub (Git 기반 실험 관리)
+  - Python의 logging 모듈
+- **Data Handling & Preprocessing**:
+  - Custom 데이터 전처리 스크립트 (리사이즈, 크롭, 패딩 등)
+- **Deployment & Cloud Services**:
+  - Docker (컨테이너 배포)
+  - Google Cloud Storage (결과 이미지 저장)
+- **Interactive Notebooks**:
+  - Jupyter Notebook (데이터 전처리, 분석, 모델 학습 실험)
+- **기타 유틸리티**:
+  - Pydantic (데이터 모델 검증)
+  - requests, re, time (네트워킹, 정규표현식, 시간 관리)
+
   
 # Virtual Try-On Server
 This project provides a server for a virtual try-on system, allowing users to test clothing virtually. It leverages deep learning models and is built with Python, PyTorch, and CUDA.
