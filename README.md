@@ -39,7 +39,17 @@ This project provides a server for a virtual try-on system, allowing users to te
    ```
    docker pull coldbrew9/wheelwear-cu12.4-p3.10:latest
    docker run --gpus all -it -p 8000:8000 coldbrew9/wheelwear-cu12.4-p3.10:latest
+   ```  
+   Copying only env.json
    ```
+    docker run --gpus all -it -p 8000:8000 coldbrew9/wheelwear-cu12.4-p3.10:latest 
+    #마운트 안하고 json만 카피
+    docker exec coldbrew9/wheelwear-cu12.4-p3.10 mkdir -p /app/VTON-project/.env  
+    docker cp ./web-project-438308-a8f3849fdf23.json {container:id}/app/VTON-project/.env/web-project-438308-a8f3849fdf23.json  
+    docker exec -it {container:id} bash
+    uvicorn app:app --host 0.0.0.0 --port 8000 --reload   
+   ```
+
 ### llm_agent.py
 - recommend_size  엔드포인트
 

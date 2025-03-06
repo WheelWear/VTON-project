@@ -41,6 +41,8 @@ MANIFEST
 lora_weights/
 densepose/
 tryon-images/
+densepose_/
+final_test/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
