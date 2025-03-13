@@ -4,11 +4,11 @@ AI 모델 학습 및 FastAPI 배포 Repo**
 
 _wrote by Seunghyuk Choi_  
 
-![VTON Project Poster](https://raw.githubusercontent.com/ColdTbrew/VTON-project/main/resource/img/main.png)
-![VTON Project ppt01](https://raw.githubusercontent.com/ColdTbrew/VTON-project/main/resource/img/ppt01.png)
-![VTON Project ppt02](https://raw.githubusercontent.com/ColdTbrew/VTON-project/main/resource/img/ppt02.png)
-![VTON Project ppt03](https://raw.githubusercontent.com/ColdTbrew/VTON-project/main/resource/img/ppt03.png)
-![VTON Project ppt04](https://raw.githubusercontent.com/ColdTbrew/VTON-project/main/resource/img/ppt04.png)
+<img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/main.png?raw=true" width="500">
+<img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt01.png?raw=true" width="500">
+<img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt02.png?raw=true" width="500">
+<img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt03.png?raw=true" width="500">
+<img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt04.png?raw=true" width="500">
 
 ### To-do
 - docker image complete
