@@ -34,9 +34,9 @@ def search_brand_trends(data):
     - Cloth type: {data.cloth_type}
     """
     params = {
-        "q": f"{data.gender} {data.cloth_type} {data.brand} clothing for size trends",
+        "q": f"{data.brand} {data.gender} {data.cloth_type} fit review",
         "api_key": SERPAPI_KEY,
-        "num": 3  # 상위 3개 검색 결과
+        "num": 5  # 상위 3개 검색 결과
     }
     response = requests.get(SERPAPI_URL, params=params)
     if response.status_code == 200:
@@ -101,7 +101,7 @@ def recommend_size(data):
       - Arm length: {data.arm_length} cm
       - Waist circumference: {data.waist_circumference} cm
 
-    Web search results for "{data.brand} clothing size trends recent reviews":
+    Web search results for "{data.brand} {data.gender} {data.cloth_type} fit review ":
     {search_summary}
 
     Please respond in JSON format with the following fields:
