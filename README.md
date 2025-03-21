@@ -10,12 +10,35 @@ _wrote by Seunghyuk Choi_
 <img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt03.png?raw=true" width="500">
 <img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt04.png?raw=true" width="500">
 
-### To-do
-- docker image complete
+아래는 제공된 `README.md` 파일의 목차를 기반으로 작성한 목차입니다. 각 섹션과 하위 섹션을 계층적으로 정리하여 프로젝트 구조를 한눈에 파악할 수 있도록 했습니다.
+
+---
+
+## 목차
+
+- [VTON-project](#vton-project)
+  - [목차](#목차)
+  - [Project Workflow](#project-workflow)
+    - [1. 데이터셋 구축 및 전처리](#1-데이터셋-구축-및-전처리)
+    - [2. 모델 학습](#2-모델-학습)
+    - [3. 모델 배포 및 추론](#3-모델-배포-및-추론)
+  - [사용된 기술 스택](#사용된-기술-스택)
+- [Virtual Try-On Server](#virtual-try-on-server)
+  - [Prerequisites](#prerequisites)
+  - [Setup Instructions](#setup-instructions)
+    - [llm\_agent.py](#llm_agentpy)
+    - [Calling the Endpoint:](#calling-the-endpoint)
+  - [Docker](#docker)
+  - [Run Train](#run-train)
+  - [Prepare dataset](#prepare-dataset)
+  - [파인튜닝을 위한 데이터셋 구축 (앉아있는 자세)](#파인튜닝을-위한-데이터셋-구축-앉아있는-자세)
+    - [데이터셋 구성 예시시](#데이터셋-구성-예시시)
+
+---
 
 ## Project Workflow
 
-이 리포지토리는 **데이터셋 구축 → 데이터 전처리 → 모델 학습 → 모델 서빙 → 배포**의 전체 과정을 상세하게 보여줍니다. 각 단계별로 중요한 스크립트와 노트북 파일들을 확인할 수 있습니다.
+이 리포지토리는 **데이터셋 구축 → 데이터 전처리 → 모델 학습 → 모델 서빙 → 배포 → 학습 자동화**의 전체 과정을 상세하게 보여줍니다. 각 단계별로 중요한 스크립트와 노트북 파일들을 확인할 수 있습니다.
 
 ### 1. 데이터셋 구축 및 전처리
 - **Notebook 폴더 (`notebook/`)**
@@ -35,6 +58,14 @@ _wrote by Seunghyuk Choi_
 - **Toy Experiments 내 학습 스크립트**
   - 학습 코드가 CatVTON에서 제공되지 않아 직접 만드는 과정 중 생성된 파일
   - LoRA 기반 모델 학습, 손실 함수 설정, 평가 지표 계산 등의 모델 학습 과정을 다룹니다.
+- **train_for_colab.py**
+  - 코랩환경에서 A100을 활용한 Lora fine-tuning 모델 학습 코드
+  - 학습 코드가 제공되지 않아 Huggingface 공식 문서를 참고해 직접 작성 (by. 최승혁, 민건)
+- **train_for_airflow.py**
+  - airflow 환경에서 dag를 활용하기 위해 모델 학습 과정을 함수로 분리
+- **Apache Airflow DAGs**
+  - 향후 데이터 베이스에 사진이 일정량 쌓이면 Trigger를 활용해 학습 자동화
+  <img src="resource/img/airflow.png" width="200" /> 
 
 ### 3. 모델 배포 및 추론
 - **app.py**
@@ -44,36 +75,42 @@ _wrote by Seunghyuk Choi_
 ## 사용된 기술 스택
 
 - **Programming Language**: Python 3.10
-- **API Framework**: FastAPI, Uvicorn
+- **API Framework**:
+  - FastAPI: REST API 서버 구현 및 모델 추론 엔드포인트 제공
+  - Uvicorn: FastAPI 서버를 비동기적으로 실행하기 위한 ASGI 서버
 - **Machine Learning & Deep Learning**:
-  - PyTorch (모델 학습, GPU 가속)
-  - Hugging Face Diffusers (이미지 생성 및 inpainting)
-  - PEFT (LoRA, 모델 파인튜닝)
-  - PyTorch Accelerate (혼합 정밀도 및 분산 학습 지원)
+  - PyTorch: 모델 학습 및 GPU 가속 추론
+  - Hugging Face Diffusers: 이미지 생성 및 inpainting 작업 (CatVTON 모델 기반)
+  - PEFT: LoRA를 활용한 효율적인 모델 파인튜닝
+  - PyTorch Accelerate: 혼합 정밀도 학습 및 분산 학습 지원
 - **Image Processing & Computer Vision**:
-  - Pillow (이미지 처리)
-  - OpenCV (영상 처리 및 변환)
-  - NumPy (수치 계산)
-  - rembg (배경 제거)
-  - SAM2, Automasker (자동 마스킹 기법)
+  - Pillow: 이미지 리사이즈, 크롭, 패딩 등 전처리 작업
+  - OpenCV: 영상 변환 및 처리 (예: 이미지 회전, 크롭)
+  - NumPy: 수치 계산 및 배열 처리
+  - rembg: 이미지 배경 제거
+  - SAM2, Automasker: 자동 마스킹 기법 (옷 및 사람 이미지 마스크 생성)
 - **Model Evaluation**:
-  - LPIPS (이미지 유사도 평가)
-  - PSNR, SSIM (영상 품질 평가)
+  - LPIPS: 학습된 모델의 이미지 유사도 평가
+  - PSNR, SSIM: 생성 이미지의 품질 평가
 - **Experiment Tracking & Logging**:
-  - wandb (실험 기록 및 모니터링)
-  - MLflow (실험 메타데이터 및 모델 관리)
-  - Dagshub (Git 기반 실험 관리)
-  - Python의 logging 모듈
+  - wandb: 모델 학습 실험 기록 및 성능 모니터링
+  - MLflow: 실험 메타데이터 관리 및 모델 버전 관리
+  - Dagshub: Git 기반 실험 관리 및 협업
+  - Python의 logging 모듈: 학습 및 추론 과정의 로그 기록
 - **Data Handling & Preprocessing**:
-  - Custom 데이터 전처리 스크립트 (리사이즈, 크롭, 패딩 등)
+  - Custom 데이터 전처리 스크립트: 이미지 리사이즈, 크롭, 패딩, 마스크 생성
+- **Workflow Automation**:
+  - Apache Airflow: 학습 파이프라인 자동화 및 스케줄링
 - **Deployment & Cloud Services**:
-  - Docker (컨테이너 배포)
-  - Google Cloud Storage (결과 이미지 저장)
+  - Docker: 모델 및 서버 컨테이너화 배포
+  - Google Cloud Storage: 추론 결과 이미지 저장
 - **Interactive Notebooks**:
-  - Jupyter Notebook (데이터 전처리, 분석, 모델 학습 실험)
+  - Jupyter Notebook: 데이터 전처리, 분석, 모델 학습 실험
 - **기타 유틸리티**:
-  - Pydantic (데이터 모델 검증)
-  - requests, re, time (네트워킹, 정규표현식, 시간 관리)
+  - Pydantic: FastAPI 엔드포인트에서 입력 데이터 모델 검증 (예: `InputData`, `OutputData`)
+  - requests: 외부 API 호출 및 데이터 다운로드
+  - re: 파일명 정규화 및 데이터 전처리 시 정규표현식 사용
+  - time: 학습 및 추론 시간 측정
 
   
 # Virtual Try-On Server
@@ -150,7 +187,32 @@ output ex.
   "reference_num": 3
 }
 ```
+### Calling the Endpoint:
 
+cURL 예시:
+```
+curl -X POST http://localhost:8000/recommend_size \
+  -H "Content-Type: application/json" \
+  -d '{"brand": "나이키", "cloth_size": "100", "cloth_type": "top", "gender": "남성", "chest_circumference": 32, "shoulder_width": 55, "arm_length": 42, "waist_circumference": 14}'
+```
+
+Python 예시:
+```
+import requests
+
+data = {
+    "brand": "나이키",
+    "cloth_size": "100",
+    "cloth_type": "top",
+    "gender": "남성",
+    "chest_circumference": 32,
+    "shoulder_width": 55,
+    "arm_length": 42,
+    "waist_circumference": 14
+}
+response = requests.post("http://localhost:8000/recommend_size", json=data)
+print(response.json())
+```
 
 input type, output type
 ```
@@ -183,11 +245,26 @@ docker run --gpus all -it -p 8000:8000 coldbrew9/wheelwear-cu12.4-p3.10:latest
 
 ## Run Train
 ```
-# local train
-python train_lora.py  --data_root_path ./dataset --output_dir ./experiments/ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4 --accumulation_steps 4
+# Local train
+python train_lora.py \
+  --data_root_path ./dataset \           # 데이터셋 경로
+  --output_dir ./experiments/ckpt \      # 학습 결과 저장 경로
+  --use_fp16 True \                     # FP16 혼합 정밀도 학습 사용 여부
+  --num_epochs 5 \                      # 학습 에포크 수
+  --batch_size 1 \                      # 배치 크기
+  --lr 1e-4 \                           # 학습률
+  --lora_rank 4 \                       # LoRA 랭크
+  --accumulation_steps 4                # 그라디언트 누적 단계 수
 
-# 코랩환경 실행
-python train_lora.py  --data_root_path /content --output_dir ./experiments/ckpt --use_fp16 True --num_epochs 5 --batch_size 1 --lr 1e-4 --lora_rank 4
+# 코랩 환경 실행
+python train_lora.py \
+  --data_root_path /content \           # 코랩 환경의 데이터셋 경로
+  --output_dir ./experiments/ckpt \     # 학습 결과 저장 경로
+  --use_fp16 True \                     # FP16 혼합 정밀도 학습 사용 여부
+  --num_epochs 5 \                      # 학습 에포크 수
+  --batch_size 1 \                      # 배치 크기
+  --lr 1e-4 \                           # 학습률
+  --lora_rank 4                         # LoRA 랭크
 ```
 
 ## Prepare dataset
