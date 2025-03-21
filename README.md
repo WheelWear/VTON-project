@@ -10,8 +10,6 @@ _wrote by Seunghyuk Choi_
 <img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt03.png?raw=true" width="500">
 <img src="https://github.com/WheelWear/VTON-project/blob/main/resource/img/ppt04.png?raw=true" width="500">
 
-아래는 제공된 `README.md` 파일의 목차를 기반으로 작성한 목차입니다. 각 섹션과 하위 섹션을 계층적으로 정리하여 프로젝트 구조를 한눈에 파악할 수 있도록 했습니다.
-
 ---
 
 ## 목차
