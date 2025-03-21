@@ -26,7 +26,7 @@ _wrote by Seunghyuk Choi_
 - [Virtual Try-On Server](#virtual-try-on-server)
   - [Prerequisites](#prerequisites)
   - [Setup Instructions](#setup-instructions)
-    - [llm\_agent.py](#llm_agentpy)
+    - [`llm_agent.py`](#llm_agentpy)
     - [Calling the Endpoint:](#calling-the-endpoint)
   - [Docker](#docker)
   - [Run Train](#run-train)
@@ -58,17 +58,18 @@ _wrote by Seunghyuk Choi_
 - **Toy Experiments 내 학습 스크립트**
   - 학습 코드가 CatVTON에서 제공되지 않아 직접 만드는 과정 중 생성된 파일
   - LoRA 기반 모델 학습, 손실 함수 설정, 평가 지표 계산 등의 모델 학습 과정을 다룹니다.
-- **train_for_colab.py**
+- **`train_for_colab.py`**
   - 코랩환경에서 A100을 활용한 Lora fine-tuning 모델 학습 코드
   - 학습 코드가 제공되지 않아 Huggingface 공식 문서를 참고해 직접 작성 (by. 최승혁, 민건)
-- **train_for_airflow.py**
+- **`train_for_airflow.py`**
   - airflow 환경에서 dag를 활용하기 위해 모델 학습 과정을 함수로 분리
 - **Apache Airflow DAGs**
+  - **`dags/catvton_lora_training_dags.py`**
   - 향후 데이터 베이스에 사진이 일정량 쌓이면 Trigger를 활용해 학습 자동화
-  <img src="resource/img/airflow.png" width="200" /> 
+  <img src="resource/img/airflow.png" width="400" /> 
 
 ### 3. 모델 배포 및 추론
-- **app.py**
+- **`app.py`**
   - FastAPI를 이용한 REST API 서버 코드로, 이미지 업로드/다운로드, 전처리, 모델 추론, 결과 이미지 저장 및 Google Cloud Storage 업로드를 담당합니다.
   - 실제 서비스 환경에서 모델 배포 및 추론 프로세스를 확인할 수 있습니다.  
 
@@ -76,38 +77,38 @@ _wrote by Seunghyuk Choi_
 
 - **Programming Language**: Python 3.10
 - **API Framework**:
-  - FastAPI: REST API 서버 구현 및 모델 추론 엔드포인트 제공
+  - ***FastAPI***: REST API 서버 구현 및 모델 추론 엔드포인트 제공
   - Uvicorn: FastAPI 서버를 비동기적으로 실행하기 위한 ASGI 서버
 - **Machine Learning & Deep Learning**:
-  - PyTorch: 모델 학습 및 GPU 가속 추론
+  - ***PyTorch***: 모델 학습 및 GPU 가속 추론
   - Hugging Face Diffusers: 이미지 생성 및 inpainting 작업 (CatVTON 모델 기반)
-  - PEFT: LoRA를 활용한 효율적인 모델 파인튜닝
+  - ***PEFT***: LoRA를 활용한 효율적인 모델 파인튜닝
   - PyTorch Accelerate: 혼합 정밀도 학습 및 분산 학습 지원
 - **Image Processing & Computer Vision**:
   - Pillow: 이미지 리사이즈, 크롭, 패딩 등 전처리 작업
   - OpenCV: 영상 변환 및 처리 (예: 이미지 회전, 크롭)
   - NumPy: 수치 계산 및 배열 처리
   - rembg: 이미지 배경 제거
-  - SAM2, Automasker: 자동 마스킹 기법 (옷 및 사람 이미지 마스크 생성)
+  - ***SAM2***, Automasker: 자동 마스킹 기법 (옷 및 사람 이미지 마스크 생성)
 - **Model Evaluation**:
   - LPIPS: 학습된 모델의 이미지 유사도 평가
   - PSNR, SSIM: 생성 이미지의 품질 평가
 - **Experiment Tracking & Logging**:
   - wandb: 모델 학습 실험 기록 및 성능 모니터링
-  - MLflow: 실험 메타데이터 관리 및 모델 버전 관리
-  - Dagshub: Git 기반 실험 관리 및 협업
+  - ***MLflow***: 실험 메타데이터 관리 및 모델 버전 관리
+  - ***Dagshub***: Git 기반 실험 관리 및 협업
   - Python의 logging 모듈: 학습 및 추론 과정의 로그 기록
 - **Data Handling & Preprocessing**:
   - Custom 데이터 전처리 스크립트: 이미지 리사이즈, 크롭, 패딩, 마스크 생성
 - **Workflow Automation**:
-  - Apache Airflow: 학습 파이프라인 자동화 및 스케줄링
+  - Apache ***Airflow***: 학습 파이프라인 자동화 및 스케줄링
 - **Deployment & Cloud Services**:
-  - Docker: 모델 및 서버 컨테이너화 배포
+  - ***Docker***: 모델 및 서버 컨테이너화 배포
   - Google Cloud Storage: 추론 결과 이미지 저장
 - **Interactive Notebooks**:
   - Jupyter Notebook: 데이터 전처리, 분석, 모델 학습 실험
 - **기타 유틸리티**:
-  - Pydantic: FastAPI 엔드포인트에서 입력 데이터 모델 검증 (예: `InputData`, `OutputData`)
+  - Pydantic: ***FastAPI*** 엔드포인트에서 입력 데이터 모델 검증 (예: `InputData`, `OutputData`)
   - requests: 외부 API 호출 및 데이터 다운로드
   - re: 파일명 정규화 및 데이터 전처리 시 정규표현식 사용
   - time: 학습 및 추론 시간 측정
@@ -156,37 +157,36 @@ This project provides a server for a virtual try-on system, allowing users to te
     uvicorn app:app --host 0.0.0.0 --port 8000 --reload   
    ```
 
-### llm_agent.py
-- recommend_size  엔드포인트
+### `llm_agent.py`
+- 브랜드별 사이즈 경향성을 기반으로 사이즈 추천 정보를 제공해 주기 위해 웹서칭과 ChatGPT-4o 사용
+- `/recommend_size` endpoint
+- inputs
+  ```
+  {
+    "brand": "나이키",
+    "cloth_size": "100",
+    "cloth_type" : "top",
+    "gender": "남성",
+    "chest_circumference": 32,
+    "shoulder_width": 55,
+    "arm_length": 42,
+    "waist_circumference": 14
+  }
+  ```
 
-
-input ex.
-```
-{
-  "brand": "나이키",
-  "cloth_size": "100",
-  "cloth_type" : "top",
-  "gender": "남성",
-  "chest_circumference": 32,
-  "shoulder_width": 55,
-  "arm_length": 42,
-  "waist_circumference": 14
-}
-```
-
-output ex.
-```
-{
-  "recommend_size": "M",
-  "additional_explanation": "최근 나이키 의류가 이전보다 크게 제작된다는 리뷰가 많으며, 사용자의 일반적인 사이즈(100)와 비교했을 때 M 사이즈가 적절할 것으로 판단됩니다.",
-  "references": [
-    "https://www.reddit.com/r/Nike/comments/15luox2/why_does_nike_keep_making_their_shirts_bigger/",
-    "https://www.trustpilot.com/review/www.nike.com",
-    "https://www.today.com/shop/nike-go-firm-support-leggings-review-rcna190644"
-  ],
-  "reference_num": 3
-}
-```
+- outputs
+  ```
+  {
+    "recommend_size": "M",
+    "additional_explanation": "최근 나이키 의류가 이전보다 크게 제작된다는 리뷰가 많으며, 사용자의 일반적인 사이즈(100)와 비교했을 때 M 사이즈가 적절할 것으로 판단됩니다.",
+    "references": [
+      "https://www.reddit.com/r/Nike/comments/15luox2/why_does_nike_keep_making_their_shirts_bigger/",
+      "https://www.trustpilot.com/review/www.nike.com",
+      "https://www.today.com/shop/nike-go-firm-support-leggings-review-rcna190644"
+    ],
+    "reference_num": 3
+  }
+  ```
 ### Calling the Endpoint:
 
 cURL 예시:
